@@ -1,0 +1,20 @@
+.venv/
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Raw downloads, derived tables, model ledgers, and rendered outputs are local artifacts.
+data/raw/vendor/
+data/raw/*.parquet
+data/processed/
+data/probability/*
+outputs/
+artifacts/
+
+# Keep directory-level provenance and documentation files tracked.
+!data/**/README.md
+!data/**/source_manifest.json

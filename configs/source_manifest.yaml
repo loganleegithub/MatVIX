@@ -1,0 +1,51 @@
+manifest_version: "1.0.0"
+availability_policy: NEXT_COMMON_SESSION_0920_ET
+series:
+  VIX_OPEN:
+    source: CBOE
+    source_symbol: VIX
+    vintage_kind: ASSUMED_PIT
+  VIX_HIGH:
+    source: CBOE
+    source_symbol: VIX
+    vintage_kind: ASSUMED_PIT
+  VIX_LOW:
+    source: CBOE
+    source_symbol: VIX
+    vintage_kind: ASSUMED_PIT
+  VIX_CLOSE:
+    source: CBOE
+    source_symbol: VIX
+    vintage_kind: ASSUMED_PIT
+  VIX9D_CLOSE:
+    source: CBOE
+    source_symbol: VIX9D
+    vintage_kind: ASSUMED_PIT
+  VIX3M_CLOSE:
+    source: CBOE
+    source_symbol: VIX3M
+    vintage_kind: ASSUMED_PIT
+  VIX6M_CLOSE:
+    source: CBOE
+    source_symbol: VIX6M
+    vintage_kind: ASSUMED_PIT
+  VVIX_CLOSE:
+    source: CBOE
+    source_symbol: VVIX
+    vintage_kind: ASSUMED_PIT
+  SKEW_CLOSE:
+    source: CBOE
+    source_symbol: SKEW
+    vintage_kind: ASSUMED_PIT
+  SPX_CLOSE:
+    source: CBOE
+    source_symbol: SPX
+    vintage_kind: ASSUMED_PIT
+  VX_SETTLE:
+    source: CFE
+    source_symbol: VX_STANDARD_MONTHLY
+    vintage_kind: ASSUMED_PIT
+notes:
+  - Historical official files generally do not preserve exact historical publication timestamps.
+  - ASSUMED_PIT rows are conservatively effective at the next common session 09:20 America/New_York.
+  - PROVIDER_BACKTESTED values are never admitted to the formal chain.

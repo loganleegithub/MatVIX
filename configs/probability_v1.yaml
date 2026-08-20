@@ -1,0 +1,44 @@
+version: "1.1.0"
+event_order:
+  - acute_front_stress_5d
+  - front_inversion_5d
+  - broad_persistent_stress_20d
+  - fast_repair_5d
+base_rate:
+  max_samples: 756
+  minimum_samples: 252
+  alpha: 1.0
+  beta: 1.0
+logistic:
+  implementation: scikit-learn==1.7.2
+  C: 1.0
+  solver: lbfgs
+  fit_intercept: true
+  dual: false
+  class_weight: null
+  warm_start: false
+  tol: 1.0e-8
+  max_iter: 1500
+  random_state: 0
+  max_training_samples: 1500
+  min_training_samples: 252
+  min_positive: 30
+  min_negative: 30
+  purge_sessions: 20
+platt:
+  max_samples: 504
+  min_positive: 20
+  min_negative: 20
+  regularization: 1.0e-6
+  maxiter: 1000
+  ftol: 1.0e-12
+  gtol: 1.0e-8
+  clip_min: 1.0e-6
+  clip_max: 0.999999
+acceptance:
+  samples: 252
+  min_positive: 20
+  min_negative: 20
+  brier_skill_min: 0.02
+  ece_max: 0.07
+  ece_bins: [51, 51, 50, 50, 50]

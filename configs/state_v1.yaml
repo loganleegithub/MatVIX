@@ -1,0 +1,43 @@
+version: "1.0.0"
+weights:
+  carry_risk:
+    front_slope30: 0.45
+    basis30_eod: 0.35
+    d5_front_slope30: 0.20
+  shock:
+    near_stress: 0.30
+    d1_log_vix: 0.20
+    d5_log_vix: 0.20
+    d5_log_vvix: 0.15
+    vvix: 0.15
+  tail_price:
+    skew: 0.70
+    d5_skew: 0.30
+  persistence:
+    fvol_30_93: 0.40
+    fvol_93_184: 0.30
+    d5_fvol_30_93: 0.20
+    curve_inversion_share: 0.10
+  repair:
+    d5_log_vix: 0.30
+    d5_near_stress: 0.25
+    d5_front_slope30: 0.20
+    d5_log_vvix: 0.15
+    d5_fvol_30_93: 0.10
+baseline_weights:
+  carry_risk: 0.30
+  shock: 0.30
+  tail_price: 0.20
+  persistence: 0.20
+thresholds:
+  hard_acute_score: 85.0
+  hard_acute_confirmations: 2
+  persistent_score: 75.0
+  persistent_baseline: 65.0
+  persistent_window: 5
+  persistent_required: 3
+  recent_stress_window: 10
+  stress_baseline: 70.0
+  repair_building: 60.0
+  repair_confirmed: 70.0
+  direction_change: 7.5

@@ -1,0 +1,29 @@
+version: "1.0.0"
+model_id: MATVIX_CBOE_CORE_V1
+percentile:
+  reference_sessions: 756
+  minimum_valid: 504
+  exclude_current: true
+futures:
+  settlement_event_time_chicago: "15:00:00"
+  curve_contracts: 6
+  target_days: 30.0
+iv_target_days:
+  vix9d: 9.0
+  vix: 30.0
+  vix3m: 93.0
+  vix6m: 184.0
+technical:
+  atr: 14
+  ema_fast: 5
+  ema_slow: 20
+  rsi: 14
+  stochastic_k: 14
+  stochastic_d: 3
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+vrp:
+  lambda: 0.94
+  annualization: 252
+  seed_returns: 252
