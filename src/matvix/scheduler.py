@@ -46,7 +46,9 @@ class LaunchdPlistSpec:
     working_directory: Path
     standard_out_path: Path
     standard_error_path: Path
-    start_interval_seconds: int = 15 * 60
+    start_interval_seconds: int | None = 15 * 60
+    run_at_load: bool = False
+    keep_alive: bool = False
 
     def __post_init__(self) -> None:
         if not self.label or any(character.isspace() for character in self.label):
@@ -59,7 +61,7 @@ class LaunchdPlistSpec:
             raise ValueError("launchd working directory must be absolute")
         if not self.standard_out_path.is_absolute() or not self.standard_error_path.is_absolute():
             raise ValueError("launchd log paths must be absolute")
-        if self.start_interval_seconds < 60:
+        if self.start_interval_seconds is not None and self.start_interval_seconds < 60:
             raise ValueError("launchd StartInterval must be at least 60 seconds")
 
 
@@ -105,9 +107,20 @@ def _already_finished(project_dir: str | Path, target: pd.Timestamp) -> DailyUpd
         DailyUpdateStatus.ALREADY_CURRENT.value,
     }:
         return None
+    paths = ProjectPaths(Path(project_dir).resolve())
+    if last_good_session(paths) != target.date().isoformat():
+        return None
+    return _persisted_result(payload, DailyUpdateStatus.ALREADY_CURRENT, target)
+
+
+def _persisted_result(
+    payload: dict[str, Any],
+    status: DailyUpdateStatus,
+    target: pd.Timestamp,
+) -> DailyUpdateResult:
     sources = payload.get("sources")
     return DailyUpdateResult(
-        status=DailyUpdateStatus.ALREADY_CURRENT,
+        status=status,
         updated_at=str(payload.get("updated_at")),
         target_session=target.date().isoformat(),
         latest_complete_session=(
@@ -123,8 +136,16 @@ def _already_finished(project_dir: str | Path, target: pd.Timestamp) -> DailyUpd
             if isinstance(sources, dict)
             else {}
         ),
-        message=f"daily session {target.date()} already completed",
+        message=(
+            f"daily session {target.date()} already completed"
+            if status == DailyUpdateStatus.ALREADY_CURRENT
+            else str(payload.get("message") or status.value)
+        ),
         snapshot_path=str(payload["snapshot_path"]) if payload.get("snapshot_path") else None,
+        next_check_at=(
+            str(payload["next_check_at"]) if payload.get("next_check_at") else None
+        ),
+        catch_up_attempted=payload.get("catch_up_attempted") is True,
     )
 
 
@@ -146,9 +167,39 @@ def _window_exhausted(
         ),
         sources=prior.sources if prior else {},
         message=f"bounded source polling window exhausted for {target.date()}; last-good preserved",
+        catch_up_attempted=bool(prior and prior.catch_up_attempted),
     )
     write_update_status(project_dir, result)
     return result
+
+
+def _late_catch_up(
+    project_dir: str | Path,
+    attempt: UpdateAttempt,
+    now: datetime,
+    target: pd.Timestamp,
+) -> DailyUpdateResult:
+    """Make exactly one post-window attempt before persisting the exhausted marker."""
+    try:
+        catch_up = attempt(target, now)
+    except Exception as exc:
+        catch_up = _empty_result(
+            project_dir=project_dir,
+            status=DailyUpdateStatus.FAILED,
+            now=now,
+            target=target,
+            message=f"daily catch-up attempt raised {type(exc).__name__}: {exc}",
+        )
+    catch_up = replace(catch_up, catch_up_attempted=True)
+    if catch_up.status in {
+        DailyUpdateStatus.PUBLISHED,
+        DailyUpdateStatus.ALREADY_CURRENT,
+        DailyUpdateStatus.FAILED,
+        DailyUpdateStatus.BUSY,
+    }:
+        write_update_status(project_dir, catch_up)
+        return catch_up
+    return _window_exhausted(project_dir, now, target, catch_up)
 
 
 def run_bounded_polling(
@@ -197,7 +248,24 @@ def run_bounded_polling(
         write_update_status(project_dir, result)
         return result
     if local_now > window_end:
-        return _window_exhausted(project_dir, initial, target, None)
+        persisted = read_update_status(project_dir)
+        if (
+            persisted is not None
+            and persisted.get("target_session") == target.date().isoformat()
+            and (
+                persisted.get("status") == DailyUpdateStatus.WINDOW_EXHAUSTED.value
+                or persisted.get("catch_up_attempted") is True
+            )
+        ):
+            try:
+                persisted_status = DailyUpdateStatus(str(persisted.get("status")))
+            except ValueError:
+                persisted_status = DailyUpdateStatus.WINDOW_EXHAUSTED
+            return _persisted_result(persisted, persisted_status, target)
+        # A laptop may sleep through the normal publication window.  Run one
+        # catch-up attempt on wake/login so an otherwise complete session is
+        # not skipped for the entire day; never enter an unbounded late poll.
+        return _late_catch_up(project_dir, attempt, initial, target)
 
     interval_seconds = policy.interval.total_seconds()
     maximum_attempts = math.ceil(policy.max_wait.total_seconds() / interval_seconds) + 1
@@ -207,7 +275,7 @@ def run_bounded_polling(
         if current.tzinfo is None:
             raise ValueError("now_fn must return timezone-aware datetimes")
         if current.astimezone(NY) > window_end:
-            return _window_exhausted(project_dir, current, target, prior)
+            return _late_catch_up(project_dir, attempt, current, target)
         try:
             result = attempt(target, current)
         except Exception as exc:
@@ -254,14 +322,15 @@ def render_launchd_plist(spec: LaunchdPlistSpec) -> str:
             "MATVIX_PROJECT_DIR": str(spec.working_directory),
             "PYTHONUNBUFFERED": "1",
         },
-        "StartInterval": spec.start_interval_seconds,
-        "RunAtLoad": False,
-        "KeepAlive": False,
+        "RunAtLoad": spec.run_at_load,
+        "KeepAlive": spec.keep_alive,
         "ProcessType": "Background",
         "ThrottleInterval": 60,
         "StandardOutPath": str(spec.standard_out_path),
         "StandardErrorPath": str(spec.standard_error_path),
     }
+    if spec.start_interval_seconds is not None:
+        payload["StartInterval"] = spec.start_interval_seconds
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False).decode("utf-8")
 
 

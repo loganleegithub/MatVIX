@@ -1,23 +1,30 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import io
 import json
 import os
+import re
 import tempfile
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import numpy as np
 import pandas as pd
 import requests
 import yaml
 
-from matvix.acceptance import build_real_acceptance_report, failed_gate_names
+from matvix.acceptance import (
+    build_real_acceptance_report,
+    failed_gate_names,
+    write_real_acceptance_report,
+)
 from matvix.calendar import (
     NY,
     decision_as_of,
@@ -27,6 +34,7 @@ from matvix.calendar import (
     sessions_in_range,
     vix_final_settlement_date,
 )
+from matvix.config_contract import validate_frozen_config
 from matvix.constants import DataStatus
 from matvix.data.assemble import REQUIRED_CORE_SERIES
 from matvix.data.cboe import (
@@ -50,6 +58,12 @@ from matvix.pipeline import (
     persist_snapshot,
     resolve_persisted_probability_artifacts,
 )
+from matvix.source_identity import (
+    OFFICIAL_SOURCE_IDENTITIES,
+    SourceIdentity,
+    admit_official_observations,
+    admit_official_vx_settlements,
+)
 from matvix.storage import read_json, read_parquet, write_json, write_parquet
 
 CFE_DAILY_SETTLEMENT_URL = (
@@ -58,6 +72,36 @@ CFE_DAILY_SETTLEMENT_URL = (
 CBOE_SPX_HISTORY_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/SPX_History.csv"
 SOURCE_MANIFEST_POLICY = "NEXT_COMMON_SESSION_0920_ET"
 RUNTIME_STATUS_RELATIVE_PATH = Path("outputs/runtime/update_status.json")
+DAILY_UPDATE_LOCK_RELATIVE_PATH = Path("outputs/runtime/daily-update.lock")
+PUBLICATION_BINDING_VERSION = "SNAPSHOT_SHA256_V1"
+VX_MONTH_CODES = {
+    1: "F",
+    2: "G",
+    3: "H",
+    4: "J",
+    5: "K",
+    6: "M",
+    7: "N",
+    8: "Q",
+    9: "U",
+    10: "V",
+    11: "X",
+    12: "Z",
+}
+VX_MONTH_NAMES = {
+    1: "Jan",
+    2: "Feb",
+    3: "Mar",
+    4: "Apr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Aug",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dec",
+}
 
 
 class FreshnessStatus(StrEnum):
@@ -77,6 +121,7 @@ class DownloadStatus(StrEnum):
 
 
 class DailyUpdateStatus(StrEnum):
+    BUSY = "BUSY"
     NOT_DUE = "NOT_DUE"
     SOURCES_PENDING = "SOURCES_PENDING"
     PUBLISHED = "PUBLISHED"
@@ -91,6 +136,10 @@ class SourceNotReady(RuntimeError):
 
 class DailyAcceptanceError(RuntimeError):
     """A fully built candidate failed the existing real-data acceptance gates."""
+
+
+class ProjectPublicationBusyError(RuntimeError):
+    """Another process currently owns this project's publication transaction."""
 
 
 @dataclass(frozen=True)
@@ -209,6 +258,7 @@ class DailyUpdateResult:
     message: str
     snapshot_path: str | None = None
     next_check_at: str | None = None
+    catch_up_attempted: bool = False
 
     @property
     def successful(self) -> bool:
@@ -226,6 +276,7 @@ class DailyUpdateResult:
             "message": self.message,
             "snapshot_path": self.snapshot_path,
             "next_check_at": self.next_check_at,
+            "catch_up_attempted": self.catch_up_attempted,
         }
 
 
@@ -233,6 +284,25 @@ RefreshHook = Callable[[ProjectPaths, pd.Timestamp, datetime], SourceRefreshResu
 CandidateBuilder = Callable[
     [ProjectPaths, pd.DataFrame, pd.DataFrame, pd.Timestamp], DailyCandidate
 ]
+ReceiptWriter = Callable[[dict[str, Any], str | Path], Path]
+
+
+def _validate_manifest_identities(manifest: SourceManifest) -> None:
+    configured = {
+        item.series_id: SourceIdentity(item.source, item.source_symbol, item.vintage_kind)
+        for item in manifest.series
+    }
+    if configured == dict(OFFICIAL_SOURCE_IDENTITIES):
+        return
+    mismatches = {
+        series_id: {
+            "configured": configured.get(series_id),
+            "required": OFFICIAL_SOURCE_IDENTITIES.get(series_id),
+        }
+        for series_id in sorted(set(configured) | set(OFFICIAL_SOURCE_IDENTITIES))
+        if configured.get(series_id) != OFFICIAL_SOURCE_IDENTITIES.get(series_id)
+    }
+    raise ValueError(f"source manifest identity policy mismatch: {mismatches}")
 
 
 def load_source_manifest(project_dir: str | Path) -> SourceManifest:
@@ -267,6 +337,7 @@ def load_source_manifest(project_dir: str | Path) -> SourceManifest:
             f"unexpected={sorted(actual - expected)}"
         )
     _ = manifest.vx_series
+    _validate_manifest_identities(manifest)
     return manifest
 
 
@@ -301,8 +372,9 @@ def latest_common_complete_session(
     *,
     not_after: pd.Timestamp | str | None = None,
 ) -> pd.Timestamp | None:
-    spot = _formal_history(observations, ["series_id"])
-    vx = _formal_history(vx_contracts, ["contract_id"])
+    _validate_manifest_identities(manifest)
+    spot = _formal_history(admit_official_observations(observations), ["series_id"])
+    vx = _formal_history(admit_official_vx_settlements(vx_contracts), ["contract_id"])
     if spot.empty or vx.empty or "value" not in spot:
         return None
     required = {item.series_id for item in manifest.spot_series}
@@ -331,10 +403,11 @@ def assess_source_freshness(
     manifest: SourceManifest,
     target_session: pd.Timestamp | str,
 ) -> FreshnessReport:
+    _validate_manifest_identities(manifest)
     target = pd.Timestamp(target_session).normalize()
     expected = target.date().isoformat()
-    spot = _formal_history(observations, ["series_id"])
-    vx = _formal_history(vx_contracts, ["contract_id"])
+    spot = _formal_history(admit_official_observations(observations), ["series_id"])
+    vx = _formal_history(admit_official_vx_settlements(vx_contracts), ["contract_id"])
     if not spot.empty:
         spot = spot.copy()
         spot["session_date"] = pd.to_datetime(spot["session_date"], errors="coerce").dt.normalize()
@@ -400,6 +473,13 @@ def assess_source_freshness(
     )
 
 
+def canonical_vx_contract_id(year: int, month: int) -> str:
+    try:
+        return f"{VX_MONTH_CODES[month]} ({VX_MONTH_NAMES[month]} {year:04d})"
+    except KeyError as exc:
+        raise ValueError(f"invalid VX contract month: {month}") from exc
+
+
 def parse_cfe_daily_settlement_csv(
     content: bytes,
     session_date: pd.Timestamp | str,
@@ -416,6 +496,38 @@ def parse_cfe_daily_settlement_csv(
     frame["expiration_date"] = pd.to_datetime(
         frame["Expiration Date"], errors="coerce"
     ).dt.normalize()
+    frame["source_contract_symbol"] = frame["Symbol"].astype(str).str.strip()
+    frame = frame.loc[
+        frame["source_contract_symbol"].str.fullmatch(r"VX/[FGHJKMNQUVXZ]\d{1,2}", na=False)
+        & frame["expiration_date"].notna()
+    ]
+    frame = frame.loc[
+        frame["expiration_date"].map(
+            lambda value: pd.Timestamp(value).date()
+            == vix_final_settlement_date(pd.Timestamp(value).year, pd.Timestamp(value).month)
+        )
+    ]
+    if frame.empty:
+        raise SourceNotReady("CFE daily settlement has no published standard-monthly VX rows")
+    symbol_parts = frame["source_contract_symbol"].str.extract(r"^VX/([FGHJKMNQUVXZ])(\d{1,2})$")
+    expected_codes = frame["expiration_date"].map(
+        lambda value: VX_MONTH_CODES[pd.Timestamp(value).month]
+    )
+    expected_years = frame["expiration_date"].map(
+        lambda value: {
+            str(pd.Timestamp(value).year % 10),
+            f"{pd.Timestamp(value).year % 100:02d}",
+        }
+    )
+    symbol_matches_expiration = symbol_parts[0].eq(expected_codes) & pd.Series(
+        [token in allowed for token, allowed in zip(symbol_parts[1], expected_years, strict=True)],
+        index=frame.index,
+    )
+    if not bool(symbol_matches_expiration.all()):
+        mismatches = frame.loc[
+            ~symbol_matches_expiration, ["source_contract_symbol", "expiration_date"]
+        ].to_dict("records")
+        raise ValueError(f"CFE VX symbol/expiration mismatch: {mismatches}")
     cleaned_price = (
         frame["Price"]
         .astype(str)
@@ -423,20 +535,14 @@ def parse_cfe_daily_settlement_csv(
         .str.replace(",", "", regex=False)
     )
     frame["settle"] = pd.to_numeric(cleaned_price, errors="coerce")
-    frame["contract_id"] = frame["Symbol"].astype(str).str.strip()
-    frame = frame.dropna(subset=["expiration_date", "settle"])
-    frame = frame.loc[frame["settle"].gt(0) & frame["contract_id"].str.startswith("VX/")]
-    frame = frame.loc[
-        frame["expiration_date"].map(
-            lambda value: pd.Timestamp(value).date()
-            == vix_final_settlement_date(pd.Timestamp(value).year, pd.Timestamp(value).month)
-        )
-    ]
+    if frame["settle"].isna().any() or frame["settle"].le(0).any():
+        raise ValueError("CFE daily settlement has an invalid standard-monthly VX price")
+    frame["contract_id"] = frame["expiration_date"].map(
+        lambda value: canonical_vx_contract_id(pd.Timestamp(value).year, pd.Timestamp(value).month)
+    )
     frame = frame.sort_values(["expiration_date", "contract_id"]).drop_duplicates(
         "expiration_date", keep="last"
     )
-    if frame.empty:
-        raise ValueError("CFE daily settlement contains no standard-monthly VX contracts")
 
     session = pd.Timestamp(session_date).normalize()
     ingested = ingested_at or datetime.now(UTC)
@@ -543,6 +649,26 @@ def _download_bytes(url: str, *, timeout: int) -> bytes:
     if response.status_code == 404:
         raise SourceNotReady(f"official source has not published this session: {url}")
     response.raise_for_status()
+    return bytes(response.content)
+
+
+def _download_cfe_settlement_bytes(
+    url: str, *, target_session: pd.Timestamp, timeout: int
+) -> bytes:
+    response = requests.get(url, timeout=timeout, headers={"User-Agent": "MatVIX/1.1"})
+    if response.status_code == 404:
+        raise SourceNotReady(f"official source has not published this session: {url}")
+    response.raise_for_status()
+    disposition = str(response.headers.get("Content-Disposition", ""))
+    match = re.search(r"FuturesSettlements_(\d{4}-\d{2}-\d{2})\.csv", disposition)
+    if match is None:
+        raise ValueError("CFE settlement response is missing its dated filename")
+    published_session = match.group(1)
+    expected_session = target_session.date().isoformat()
+    if published_session != expected_session:
+        raise SourceNotReady(
+            f"CFE settlement fallback is {published_session}; waiting for {expected_session}"
+        )
     return bytes(response.content)
 
 
@@ -705,7 +831,9 @@ def refresh_official_sources(
     cfe_url = CFE_DAILY_SETTLEMENT_URL.format(session=target.date().isoformat())
     cfe_path = root / "cfe" / f"settlement_{target.date().isoformat()}.csv"
     try:
-        cfe_content = _download_bytes(cfe_url, timeout=timeout)
+        cfe_content = _download_cfe_settlement_bytes(
+            cfe_url, target_session=target, timeout=timeout
+        )
         cfe_frame = parse_cfe_daily_settlement_csv(
             cfe_content, target, ingested_at=now.astimezone(UTC)
         )
@@ -864,6 +992,12 @@ def _frame_digest(frame: pd.DataFrame) -> str:
     return digest.hexdigest()
 
 
+def frame_content_digest(frame: pd.DataFrame) -> str:
+    """Stable identity for one exact dashboard-supporting DataFrame generation."""
+
+    return "sha256:" + _frame_digest(frame)
+
+
 def _write_parquet_if_changed(frame: pd.DataFrame, path: Path) -> bool:
     if path.exists() and _frame_digest(read_parquet(path)) == _frame_digest(frame):
         return False
@@ -884,29 +1018,239 @@ def write_update_status(project_dir: str | Path, result: DailyUpdateResult) -> P
     return write_json(result.as_dict(), runtime_status_path(project_dir))
 
 
-def last_good_session(paths: ProjectPaths) -> str | None:
-    status = read_update_status(paths.root)
-    recorded = (
-        str(status.get("last_good_session")) if status and status.get("last_good_session") else None
-    )
-    candidates: list[tuple[pd.Timestamp, str]] = []
-    for path in paths.daily_output_dir.glob("????-??-??.json"):
+def acceptance_receipt_path(paths: ProjectPaths, session: pd.Timestamp | str) -> Path:
+    selected = pd.Timestamp(session).date().isoformat()
+    return paths.root / "artifacts" / "acceptance" / f"real_acceptance_{selected}.json"
+
+
+def _stable_snapshot_publication(
+    snapshot_path: str | Path,
+    *,
+    expected_session: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    path = Path(snapshot_path)
+    for _ in range(2):
         try:
-            payload = read_json(path)
-            session = pd.Timestamp(payload.get("session_date")).normalize()
-        except (OSError, ValueError, TypeError):
+            before = path.stat()
+            content = path.read_bytes()
+            after = path.stat()
+        except OSError as exc:
+            raise DailyAcceptanceError(f"snapshot publication binding unreadable: {path}") from exc
+        before_token = (before.st_ino, before.st_mtime_ns, before.st_size)
+        after_token = (after.st_ino, after.st_mtime_ns, after.st_size)
+        if before_token != after_token or len(content) != after.st_size:
             continue
-        if str(payload.get("data_status")) != DataStatus.OK.value:
-            continue
-        if "PROBABILITY_JOB_FAILED" in payload.get("issues", []):
-            continue
-        candidates.append((session, session.date().isoformat()))
-    discovered = max(candidates)[1] if candidates else None
-    if recorded is None:
-        return discovered
-    if discovered is None:
-        return recorded
-    return max(recorded, discovered)
+        try:
+            payload = json.loads(content)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DailyAcceptanceError(
+                f"snapshot publication binding invalid JSON: {path}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise DailyAcceptanceError(f"snapshot publication binding is not an object: {path}")
+        session = payload.get("session_date")
+        if not isinstance(session, str):
+            raise DailyAcceptanceError("snapshot publication binding has no session_date")
+        try:
+            normalized_session = pd.Timestamp(session).date().isoformat()
+        except (TypeError, ValueError) as exc:
+            raise DailyAcceptanceError(
+                "snapshot publication binding has invalid session_date"
+            ) from exc
+        if normalized_session != session or (
+            expected_session is not None and session != expected_session
+        ):
+            raise DailyAcceptanceError(
+                "snapshot publication binding session does not match receipt"
+            )
+        binding = {
+            "binding_version": PUBLICATION_BINDING_VERSION,
+            "session_date": session,
+            "snapshot_sha256": _content_hash(content),
+            "snapshot_size": len(content),
+        }
+        return payload, binding
+    raise DailyAcceptanceError(f"snapshot changed while publication binding was read: {path}")
+
+
+def snapshot_publication_binding(
+    snapshot_path: str | Path,
+    *,
+    expected_session: str | None = None,
+) -> dict[str, Any]:
+    """Return the exact on-disk snapshot identity a passing receipt must authorize."""
+
+    _, binding = _stable_snapshot_publication(
+        snapshot_path,
+        expected_session=expected_session,
+    )
+    return binding
+
+
+def with_snapshot_publication_binding(
+    report: Mapping[str, Any], snapshot_path: str | Path
+) -> dict[str, Any]:
+    """Copy an acceptance report and bind it to one exact daily snapshot."""
+
+    session = report.get("session_date")
+    if not isinstance(session, str):
+        raise DailyAcceptanceError("acceptance receipt session is missing")
+    bound = dict(report)
+    bound["publication_binding"] = snapshot_publication_binding(
+        snapshot_path,
+        expected_session=session,
+    )
+    return bound
+
+
+def _accepted_snapshot_session(paths: ProjectPaths, receipt_path: Path) -> str | None:
+    try:
+        receipt = read_json(receipt_path)
+        session = str(receipt["session_date"])
+        normalized = pd.Timestamp(session).date().isoformat()
+        if normalized != session or receipt_path.name != f"real_acceptance_{session}.json":
+            return None
+        if receipt.get("passed") is not True:
+            return None
+        snapshot_path = paths.daily_output_dir / f"{session}.json"
+        snapshot, expected_binding = _stable_snapshot_publication(
+            snapshot_path,
+            expected_session=session,
+        )
+        if snapshot.get("session_date") != session:
+            return None
+        if snapshot.get("data_status") != DataStatus.OK.value:
+            return None
+        publication_binding = receipt.get("publication_binding")
+        if not isinstance(publication_binding, Mapping):
+            return None
+        if dict(publication_binding) != expected_binding:
+            return None
+        if receipt_path.stat().st_mtime_ns < snapshot_path.stat().st_mtime_ns:
+            return None
+    except (DailyAcceptanceError, KeyError, OSError, TypeError, ValueError):
+        return None
+    return session
+
+
+def last_good_session(paths: ProjectPaths) -> str | None:
+    receipt_dir = paths.root / "artifacts" / "acceptance"
+    candidates = [
+        session
+        for path in receipt_dir.glob("real_acceptance_*.json")
+        if (session := _accepted_snapshot_session(paths, path)) is not None
+    ]
+    return max(candidates) if candidates else None
+
+
+def _release_receipt(
+    paths: ProjectPaths,
+    target: pd.Timestamp,
+    candidate: DailyCandidate,
+) -> dict[str, Any]:
+    report = dict(candidate.acceptance_report)
+    session = target.date().isoformat()
+    if report.get("passed") is not True:
+        raise DailyAcceptanceError("acceptance receipt is not passing")
+    if report.get("session_date") != session:
+        raise DailyAcceptanceError("acceptance receipt session does not match target")
+    state_history = candidate.probability_contract.get("state_history")
+    state_digest = (
+        state_history.get("relevant_columns_digest") if isinstance(state_history, Mapping) else None
+    )
+    if not isinstance(state_digest, str) or not state_digest.startswith("sha256:"):
+        raise DailyAcceptanceError("probability artifact state digest is missing")
+    report["release_contract"] = {
+        **asdict(validate_frozen_config(paths.root)),
+        "probability_artifact_cache": candidate.cache_action,
+        "probability_artifact_state_digest": state_digest,
+        "dashboard_state_history_digest": frame_content_digest(candidate.states),
+        "dashboard_oof_digest": frame_content_digest(candidate.oof),
+    }
+    return report
+
+
+def _receipt_is_current(
+    path: Path,
+    snapshot_path: Path,
+    expected: dict[str, Any],
+) -> bool:
+    try:
+        return (
+            read_json(path) == expected
+            and path.stat().st_mtime_ns >= snapshot_path.stat().st_mtime_ns
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _acquire_daily_update_lock(
+    paths: ProjectPaths,
+    *,
+    current: datetime,
+    target: pd.Timestamp,
+) -> TextIO | None:
+    lock_path = paths.root / DAILY_UPDATE_LOCK_RELATIVE_PATH
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        return None
+    try:
+        lock_file.seek(0)
+        lock_file.truncate()
+        json.dump(
+            {
+                "pid": os.getpid(),
+                "started_at": current.astimezone(UTC).isoformat(),
+                "target_session": target.date().isoformat(),
+            },
+            lock_file,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        lock_file.write("\n")
+        lock_file.flush()
+        os.fsync(lock_file.fileno())
+    except Exception:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+        raise
+    return lock_file
+
+
+def _release_daily_update_lock(lock_file: TextIO) -> None:
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock_file.close()
+
+
+@contextmanager
+def project_publication_lock(
+    project_dir: str | Path,
+    target_session: pd.Timestamp | str,
+    *,
+    current: datetime | None = None,
+) -> Iterator[None]:
+    """Hold the one nonblocking lock shared by automatic and manual publication."""
+
+    acquired_at = current or datetime.now(UTC)
+    if acquired_at.tzinfo is None:
+        raise ValueError("current must be timezone-aware")
+    target = pd.Timestamp(target_session).normalize()
+    paths = ProjectPaths(Path(project_dir).resolve())
+    lock_file = _acquire_daily_update_lock(paths, current=acquired_at, target=target)
+    if lock_file is None:
+        raise ProjectPublicationBusyError(
+            f"another MatVIX publication holds the project lock for {paths.root}"
+        )
+    try:
+        yield
+    finally:
+        _release_daily_update_lock(lock_file)
 
 
 def _source_status_payload(
@@ -949,7 +1293,7 @@ def _result(
     )
 
 
-def run_daily_update(
+def _run_daily_update_locked(
     project_dir: str | Path,
     target_session: pd.Timestamp | str,
     *,
@@ -957,8 +1301,9 @@ def run_daily_update(
     refresh: RefreshHook | None = None,
     manifest: SourceManifest | None = None,
     candidate_builder: CandidateBuilder = build_daily_candidate,
+    receipt_writer: ReceiptWriter = write_real_acceptance_report,
 ) -> DailyUpdateResult:
-    """Build and publish one accepted session, leaving the prior daily JSON intact on failure."""
+    """Build and publish one accepted session while the project lock is held."""
 
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
@@ -1030,6 +1375,7 @@ def run_daily_update(
 
     try:
         candidate = candidate_builder(paths, observations, vx_contracts, target)
+        receipt = _release_receipt(paths, target, candidate)
         snapshot_path = paths.daily_output_dir / f"{target.date().isoformat()}.json"
         existing = read_json(snapshot_path) if snapshot_path.exists() else None
         snapshot_changed = existing != candidate.payload
@@ -1050,12 +1396,21 @@ def run_daily_update(
                 pd.DataFrame(),
                 pd.DataFrame(),
             )
-            status = DailyUpdateStatus.PUBLISHED
-            message = f"published accepted daily snapshot for {target.date()}"
         else:
             write_json(candidate.metadata, paths.probability_metadata)
+        receipt = with_snapshot_publication_binding(receipt, snapshot_path)
+        receipt_path = acceptance_receipt_path(paths, target)
+        receipt_changed = not _receipt_is_current(receipt_path, snapshot_path, receipt)
+        if receipt_changed:
+            receipt_writer(receipt, receipt_path)
+            if not _receipt_is_current(receipt_path, snapshot_path, receipt):
+                raise DailyAcceptanceError("acceptance receipt was not durably published last")
+        if snapshot_changed or receipt_changed:
+            status = DailyUpdateStatus.PUBLISHED
+            message = f"published accepted daily snapshot and receipt for {target.date()}"
+        else:
             status = DailyUpdateStatus.ALREADY_CURRENT
-            message = f"accepted daily snapshot already current for {target.date()}"
+            message = f"accepted daily snapshot and receipt already current for {target.date()}"
         result = _result(
             status=status,
             now=current,
@@ -1078,3 +1433,45 @@ def run_daily_update(
         )
     write_update_status(paths.root, result)
     return result
+
+
+def run_daily_update(
+    project_dir: str | Path,
+    target_session: pd.Timestamp | str,
+    *,
+    now: datetime | None = None,
+    refresh: RefreshHook | None = None,
+    manifest: SourceManifest | None = None,
+    candidate_builder: CandidateBuilder = build_daily_candidate,
+    receipt_writer: ReceiptWriter = write_real_acceptance_report,
+) -> DailyUpdateResult:
+    """Run one project-scoped update without allowing overlapping publishers."""
+
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    target = pd.Timestamp(target_session).normalize()
+    if not is_session(target):
+        raise ValueError(f"target is not an XNYS session: {target.date()}")
+    paths = ProjectPaths(Path(project_dir).resolve())
+    try:
+        with project_publication_lock(paths.root, target, current=current):
+            return _run_daily_update_locked(
+                paths.root,
+                target,
+                now=current,
+                refresh=refresh,
+                manifest=manifest,
+                candidate_builder=candidate_builder,
+                receipt_writer=receipt_writer,
+            )
+    except ProjectPublicationBusyError:
+        return DailyUpdateResult(
+            status=DailyUpdateStatus.BUSY,
+            updated_at=current.astimezone(UTC).isoformat(),
+            target_session=target.date().isoformat(),
+            latest_complete_session=None,
+            last_good_session=last_good_session(paths),
+            sources={},
+            message="another MatVIX daily update already holds the project publication lock",
+        )

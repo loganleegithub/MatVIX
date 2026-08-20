@@ -27,6 +27,7 @@ from matvix.narrative import (
     structural_triggers,
     what_changes_the_view,
 )
+from matvix.state.scores import component_contributions
 
 CORE_OBSERVATION_FIELDS = [
     "vix_open",
@@ -262,6 +263,12 @@ def build_daily_output(
             ),
             "feature_digest": feature_digest(row),
             "source_rows": _int_or_zero(row.get("source_rows")),
+            # Freeze the complete, untruncated five-axis decomposition in the
+            # accepted snapshot.  Human-facing evidence must never depend on a
+            # later mutable state-history file.
+            "component_contributions": (
+                component_contributions(row) if data_status == "OK" else []
+            ),
         },
         "issues": list(issues or []),
     }

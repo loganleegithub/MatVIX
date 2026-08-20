@@ -155,6 +155,9 @@ def test_trader_dashboard_exposes_interaction_and_http_polling_hooks() -> None:
     assert "startStatusPolling" in dashboard
     assert "latest_snapshot_session" in dashboard
     assert "last_good_session" in dashboard
+    assert "dashboardRevision" in dashboard
+    assert "DASHBOARD_RENDER_FAILED" in dashboard
+    assert "待展示截面" in dashboard
     assert "新截面可用，刷新页面查看" in dashboard
     assert "matvix:status" in dashboard
     assert "data-live-field=\"session_date\"" in dashboard
@@ -162,6 +165,95 @@ def test_trader_dashboard_exposes_interaction_and_http_polling_hooks() -> None:
     assert "short-temperature-gauge" in dashboard
     assert "composite-judgment-gauge" in dashboard
     assert "structure-stability-gauge" in dashboard
+
+
+def test_triad_driver_labels_do_not_borrow_evidence_from_other_axes() -> None:
+    snapshot = deepcopy(_snapshot())
+    snapshot["market_story"]["drivers"] = [
+        {
+            "evidence_id": "tail_price.skew_level",
+            "feature": "skew_close",
+            "percentile": 0.9,
+            "meaning": "尾部保险价格偏高",
+        }
+    ]
+    snapshot["market_story"]["counter_evidence"] = [
+        {
+            "evidence_id": "tail_price.vvix_level",
+            "feature": "vvix_close",
+            "percentile": 0.2,
+            "meaning": "波动率的波动率回落",
+        }
+    ]
+
+    dashboard = render_dashboard(snapshot)
+
+    triad = dashboard[dashboard.index('<section class="triad"') : dashboard.index(
+        '<section class="axes-section"'
+    )]
+    assert "主要驱动：Shock 分量未进入全局证据榜" in triad
+    assert "主要缓冲：Carry 分量未进入全局证据榜" in triad
+    assert "SKEW" not in triad
+    assert "VVIX" not in triad
+
+
+def test_triad_uses_axis_specific_components_when_global_evidence_is_truncated() -> None:
+    snapshot = deepcopy(_snapshot())
+    snapshot["market_story"]["drivers"] = [
+        {
+            "evidence_id": "tail.skew_level",
+            "feature": "skew_close",
+            "percentile": 1.0,
+            "meaning": "尾部价格",
+        }
+    ]
+    snapshot["market_story"]["counter_evidence"] = []
+    snapshot["diagnostics"]["component_contributions"] = [
+        {
+            "axis": "shock",
+            "id": "shock.near_stress",
+            "percentile": 1.0,
+            "contribution": 0.050,
+            "feature_refs": ["near_stress_log_ratio"],
+        },
+        {
+            "axis": "shock",
+            "id": "shock.vix_change_1d",
+            "percentile": 1.0,
+            "contribution": 0.045,
+            "feature_refs": ["d1_log_vix"],
+        },
+        {
+            "axis": "shock",
+            "id": "shock.vvix_change_5d",
+            "percentile": 1.0,
+            "contribution": 0.040,
+            "feature_refs": ["d5_log_vvix"],
+        },
+        {
+            "axis": "carry_risk",
+            "id": "carry.front_slope",
+            "percentile": 0.0,
+            "contribution": 0.0,
+            "feature_refs": ["front_slope30"],
+        },
+        {
+            "axis": "carry_risk",
+            "id": "carry.basis",
+            "percentile": 0.0,
+            "contribution": 0.001,
+            "feature_refs": ["basis30_eod"],
+        },
+    ]
+
+    dashboard = render_dashboard(snapshot)
+    triad = dashboard[dashboard.index('<section class="triad"') : dashboard.index(
+        '<section class="axes-section"'
+    )]
+
+    assert "主要驱动：VIX9D / VIX · VIX · VVIX" in triad
+    assert "主要缓冲：VX 曲线 · Basis" in triad
+    assert "SKEW" not in triad
 
 
 def test_base_rate_only_summary_does_not_become_a_feature_signal() -> None:

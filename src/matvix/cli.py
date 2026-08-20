@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -16,13 +17,26 @@ from matvix.acceptance import (
     failed_gate_names,
     write_real_acceptance_report,
 )
+from matvix.calendar import decision_as_of
 from matvix.config import project_root
 from matvix.config_contract import validate_frozen_config
-from matvix.dashboard import build_dashboard_file, serve_dashboard
+from matvix.daily_update import (
+    DailyUpdateResult,
+    DailyUpdateStatus,
+    ProjectPublicationBusyError,
+    frame_content_digest,
+    project_publication_lock,
+    read_update_status,
+    refresh_official_sources,
+    run_daily_update,
+    with_snapshot_publication_binding,
+)
+from matvix.dashboard import build_dashboard_file
 from matvix.data.cboe import SUPPORTED_SYMBOLS, download_cboe_core, import_cboe_history
 from matvix.data.cfe import download_monthly_history, import_cfe_directory
 from matvix.data.point_in_time import merge_revision_history
 from matvix.data.spx import import_spx_close
+from matvix.http_runtime import serve_dashboard_runtime
 from matvix.pipeline import (
     ProjectPaths,
     build_snapshot_payload,
@@ -34,6 +48,12 @@ from matvix.pipeline import (
     resolve_persisted_probability_artifacts,
 )
 from matvix.probability.walk_forward import runtime_contract_status
+from matvix.scheduler import (
+    LaunchdPlistSpec,
+    recommended_launch_agent_path,
+    run_bounded_polling,
+    write_launchd_plist,
+)
 from matvix.storage import read_json, read_parquet, write_parquet
 
 app = typer.Typer(
@@ -51,6 +71,10 @@ DEFAULT_PROJECT_DIR = project_root()
 
 def _paths(project_dir: Path) -> ProjectPaths:
     return ProjectPaths(project_dir.resolve())
+
+
+def _current_time() -> datetime:
+    return datetime.now(UTC)
 
 
 @app.command("doctor")
@@ -305,16 +329,34 @@ def accept_real(
 ) -> None:
     """Run the real persisted market-state and probability acceptance gates."""
     paths = _paths(project_dir)
-    observations, vx_contracts = load_persisted_inputs(paths)
-    states = load_persisted_states(paths)
-    state_dates = pd.to_datetime(states["session_date"]).dt.normalize()
     if session_date is None:
-        complete = states.loc[states["data_status"].eq("OK")]
+        preview_states = load_persisted_states(paths)
+        complete = preview_states.loc[preview_states["data_status"].eq("OK")]
         if complete.empty:
             raise typer.BadParameter("No data_status=OK state is available for acceptance")
         selected = pd.to_datetime(complete["session_date"]).max().date().isoformat()
     else:
         selected = pd.Timestamp(session_date).date().isoformat()
+    current = _current_time()
+    try:
+        with project_publication_lock(paths.root, selected, current=current):
+            _accept_real_locked(paths, selected, output, current=current)
+    except ProjectPublicationBusyError:
+        typer.echo("BUSY: another MatVIX publisher owns the project lock")
+        raise typer.Exit(code=6) from None
+
+
+def _accept_real_locked(
+    paths: ProjectPaths,
+    selected: str,
+    output: Path | None,
+    *,
+    current: datetime,
+) -> None:
+    """Recompute, compare, content-bind and sign one snapshot under the project lock."""
+    observations, vx_contracts = load_persisted_inputs(paths)
+    states = load_persisted_states(paths)
+    state_dates = pd.to_datetime(states["session_date"]).dt.normalize()
     if not state_dates.eq(pd.Timestamp(selected)).any():
         raise typer.BadParameter(f"No state row exists for {selected}")
 
@@ -344,10 +386,42 @@ def accept_real(
         **asdict(validate_frozen_config(paths.root)),
         "probability_artifact_cache": cache_action,
         "probability_artifact_state_digest": contract["state_history"]["relevant_columns_digest"],
+        "dashboard_state_history_digest": frame_content_digest(states),
+        "dashboard_oof_digest": frame_content_digest(oof),
     }
-    target = output or (
+    formal_target = (
         paths.root / "artifacts" / "acceptance" / f"real_acceptance_{selected}.json"
     )
+    target = output or formal_target
+    is_formal_target = target.resolve() == formal_target.resolve()
+    if is_formal_target:
+        formal_at = decision_as_of(pd.Timestamp(selected))
+        if current < formal_at:
+            raise typer.BadParameter(
+                f"Formal acceptance is gated until {formal_at.isoformat()}"
+            )
+        snapshot_path = paths.daily_output_dir / f"{selected}.json"
+        if not snapshot_path.exists():
+            raise typer.BadParameter(
+                f"Formal acceptance requires an existing daily snapshot: {snapshot_path}"
+            )
+        persisted_snapshot = read_json(snapshot_path)
+        if persisted_snapshot != snapshot:
+            raise typer.BadParameter(
+                "Formal acceptance recomputation does not match the persisted daily snapshot; "
+                "rebuild/train the snapshot before signing it"
+            )
+        if report["passed"]:
+            report = with_snapshot_publication_binding(report, snapshot_path)
+        else:
+            # A failed re-audit is evidence, not a publication.  Keep it away
+            # from the canonical receipt so a transient failed run cannot
+            # revoke an already accepted last-good snapshot.
+            target = (
+                formal_target.parent
+                / "attempts"
+                / f"real_acceptance_{selected}_latest_failed.json"
+            )
     write_real_acceptance_report(report, target)
     for gate in report["gates"]:
         typer.echo(f"{'PASS' if gate['passed'] else 'FAIL'} {gate['name']}")
@@ -454,24 +528,143 @@ def export_dashboard(
 
 @app.command("serve")
 def serve(
-    snapshot: Annotated[Path, typer.Option(help="Daily snapshot JSON path.")],
     host: Annotated[str, typer.Option(help="Bind host.")] = "127.0.0.1",
-    port: Annotated[int, typer.Option(help="Bind port.")] = 8765,
+    port: Annotated[int, typer.Option(help="Bind port.")] = 8788,
     open_browser: Annotated[bool, typer.Option(help="Open the local browser.")] = False,
     project_dir: ProjectDir = DEFAULT_PROJECT_DIR,
 ) -> None:
-    """Start the local no-cloud Dashboard."""
-    paths = _paths(project_dir)
-    history = read_parquet(paths.states) if paths.states.exists() else None
-    oof = read_parquet(paths.oof) if paths.oof.exists() else None
-    serve_dashboard(
-        snapshot,
+    """Serve the latest accepted snapshot with status and snapshot APIs."""
+    serve_dashboard_runtime(
+        project_dir,
         host=host,
         port=port,
         open_browser=open_browser,
-        history=history,
-        oof=oof,
     )
+
+
+@app.command("daily-update")
+def daily_update(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
+    """Refresh official sources and publish the due accepted session."""
+
+    def attempt(target: pd.Timestamp, now: datetime) -> DailyUpdateResult:
+        return run_daily_update(
+            project_dir,
+            target,
+            now=now,
+            refresh=refresh_official_sources,
+        )
+
+    result = run_bounded_polling(project_dir, attempt)
+    typer.echo(json.dumps(result.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    if result.status in {DailyUpdateStatus.FAILED, DailyUpdateStatus.WINDOW_EXHAUSTED}:
+        raise typer.Exit(code=5)
+
+
+@app.command("runtime-status")
+def runtime_status(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
+    """Print the persisted daily updater status without changing project state."""
+    payload = read_update_status(project_dir)
+    if payload is None:
+        typer.echo("NO_RUNTIME_STATUS")
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _launchd_specs(project_dir: Path, *, python: Path, port: int) -> tuple[LaunchdPlistSpec, ...]:
+    root = project_dir.resolve()
+    runtime_dir = root / "outputs" / "runtime"
+    return (
+        LaunchdPlistSpec(
+            label="com.matvix.daily-update",
+            program_arguments=(
+                str(python),
+                "-m",
+                "matvix",
+                "daily-update",
+                "--project-dir",
+                str(root),
+            ),
+            working_directory=root,
+            standard_out_path=runtime_dir / "daily-update.stdout.log",
+            standard_error_path=runtime_dir / "daily-update.stderr.log",
+            start_interval_seconds=5 * 60,
+            run_at_load=True,
+            keep_alive=False,
+        ),
+        LaunchdPlistSpec(
+            label="com.matvix.dashboard",
+            program_arguments=(
+                str(python),
+                "-m",
+                "matvix",
+                "serve",
+                "--project-dir",
+                str(root),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ),
+            working_directory=root,
+            standard_out_path=runtime_dir / "dashboard.stdout.log",
+            standard_error_path=runtime_dir / "dashboard.stderr.log",
+            start_interval_seconds=None,
+            run_at_load=True,
+            keep_alive=True,
+        ),
+    )
+
+
+def _bootstrap_launch_agent(path: Path, label: str) -> None:
+    domain = f"gui/{os.getuid()}"
+    loaded = subprocess.run(
+        ["launchctl", "print", f"{domain}/{label}"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+    if loaded:
+        subprocess.run(
+            ["launchctl", "bootout", f"{domain}/{label}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    subprocess.run(
+        ["launchctl", "bootstrap", domain, str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["launchctl", "kickstart", f"{domain}/{label}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+@app.command("install-services")
+def install_services(
+    project_dir: ProjectDir = DEFAULT_PROJECT_DIR,
+    port: Annotated[int, typer.Option(help="Local Dashboard HTTP port.")] = 8788,
+    load: Annotated[
+        bool,
+        typer.Option("--load/--write-only", help="Bootstrap both LaunchAgents immediately."),
+    ] = False,
+) -> None:
+    """Write the daily updater and Dashboard LaunchAgents; optionally load them."""
+    root = project_dir.resolve()
+    runtime_dir = root / "outputs" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    python = Path(sys.executable).absolute()
+    for spec in _launchd_specs(root, python=python, port=port):
+        destination = recommended_launch_agent_path(spec.label, home=Path.home())
+        target = write_launchd_plist(spec, destination)
+        typer.echo(f"Wrote {target}")
+        if load:
+            _bootstrap_launch_agent(target, spec.label)
+            typer.echo(f"Loaded {spec.label}")
 
 
 @app.command("test")

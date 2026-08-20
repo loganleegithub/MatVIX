@@ -6,12 +6,13 @@ import threading
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from matvix.state.scores import component_contributions
 from matvix.storage import read_json
 
 EVENT_LABELS = {
@@ -160,30 +161,75 @@ FEATURE_SHORT_LABELS = {
 }
 
 LIVE_STATUS_SCRIPT = """
-<script>
+<script id="matvix-runtime-poll">
 (() => {
   const timers = new Map();
+  let reloadRequested = false;
+
+  const STATUS_LABELS = {
+    PUBLISHED: "更新完成",
+    ALREADY_CURRENT: "已是最新",
+    NOT_DUE: "等待正式更新时间",
+    SOURCES_PENDING: "等待数据源齐备",
+    BUSY: "已有更新任务运行中",
+    WINDOW_EXHAUSTED: "本轮等待结束，保留上一完整截面",
+    FAILED: "更新失败，保留上一完整截面",
+    DASHBOARD_RENDER_FAILED: "新截面展示失败，保留上一可用页面",
+    RUNNING: "系统运行",
+    DEGRADED: "系统降级"
+  };
+
+  function formatEtTime(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+    return `${new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "America/New_York",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(parsed)} ET`;
+  }
 
   function applyStatus(payload) {
     if (!payload || typeof payload !== "object") return;
     const runtime = document.getElementById("runtime-status");
+    const runtimeText = document.getElementById("runtime-status-text");
+    const update = payload.update && typeof payload.update === "object" ? payload.update : payload;
+    const renderFailure = payload.render_failure || payload.dashboard_error;
     const latest = payload.latest_snapshot_session || payload.last_good_session;
     const lastGood = payload.last_good_session || latest;
     const current = document.body.dataset.sessionDate;
-    if (runtime) {
-      const parts = [String(payload.status || "状态已更新")];
+    const currentRevision = document.body.dataset.dashboardRevision;
+    const revisionChanged = payload.dashboard_revision && currentRevision
+      && payload.dashboard_revision !== currentRevision;
+    if (runtimeText) {
+      const rawStatus = payload.runtime_status === "DASHBOARD_RENDER_FAILED"
+        ? payload.runtime_status
+        : (update.status && update.status !== "UNKNOWN"
+          ? update.status
+          : payload.runtime_status);
+      const parts = [STATUS_LABELS[rawStatus] || String(rawStatus || "状态已更新")];
       if (lastGood) parts.push(`最近完整截面 ${lastGood}`);
-      if (payload.updated_at) parts.push(`更新 ${payload.updated_at}`);
-      if (payload.next_check_at) parts.push(`下次检查 ${payload.next_check_at}`);
-      if (latest && current && latest !== current) {
-        parts.push("新截面可用，刷新页面查看");
-        runtime.dataset.newSnapshot = "true";
+      if (renderFailure?.candidate_session) {
+        parts.push(`待展示截面 ${renderFailure.candidate_session}`);
       }
-      runtime.textContent = parts.join(" · ");
+      const updatedAt = update.updated_at || payload.last_update_at;
+      if (updatedAt && !update.next_check_at) parts.push(`更新 ${formatEtTime(updatedAt)}`);
+      if (update.next_check_at) parts.push(`下次检查 ${formatEtTime(update.next_check_at)}`);
+      if ((latest && current && latest !== current) || revisionChanged) {
+        parts.push("新截面可用，刷新页面查看");
+        if (runtime) runtime.dataset.newSnapshot = "true";
+      }
+      runtimeText.textContent = parts.join(" · ");
     }
     document.dispatchEvent(new CustomEvent("matvix:status", { detail: payload }));
-    if (latest && current && latest !== current) {
+    if ((latest && current && latest !== current) || revisionChanged) {
       document.dispatchEvent(new CustomEvent("matvix:new-snapshot", { detail: payload }));
+      if (!reloadRequested) {
+        reloadRequested = true;
+        window.location.reload();
+      }
     }
   }
 
@@ -511,6 +557,8 @@ def _indicator_html(
     height: int,
     include_plotlyjs: bool = False,
     annotation: str | None = None,
+    annotation_size: int | None = None,
+    annotation_y: float | None = None,
     compact: bool = False,
     reverse_semantics: bool = False,
     show_number: bool = True,
@@ -578,10 +626,13 @@ def _indicator_html(
         annotations.append(
             {
                 "x": 0.5,
-                "y": 0.08 if compact else 0.12,
+                "y": annotation_y if annotation_y is not None else (0.08 if compact else 0.12),
                 "text": annotation,
                 "showarrow": False,
-                "font": {"color": "#eef3fb", "size": 12 if compact else 16},
+                "font": {
+                    "color": "#eef3fb",
+                    "size": annotation_size or (12 if compact else 16),
+                },
             }
         )
     figure.update_layout(
@@ -600,6 +651,83 @@ def _indicator_html(
             figure,
             full_html=False,
             include_plotlyjs="inline" if include_plotlyjs else False,
+            config={"displayModeBar": False, "responsive": True},
+            div_id=div_id,
+        )
+    )
+
+
+def _radial_indicator_html(
+    value: Any,
+    *,
+    div_id: str,
+    tone: str,
+    label: str,
+    height: int = 150,
+    show_value: bool = True,
+    secondary: str | None = None,
+) -> str:
+    """Render the selected trader mock's segmented 270-degree instrument ring."""
+    numeric = _numeric(value)
+    shown_value = 0.0 if numeric is None else max(0.0, min(100.0, numeric))
+    segment_count = 20
+    active_segments = segment_count if not show_value else round(shown_value / 100 * segment_count)
+    segment_values = [75.0 / segment_count] * segment_count
+    colors = [tone if index < active_segments else "#273247" for index in range(segment_count)]
+    figure = go.Figure(
+        go.Pie(
+            values=[*segment_values, 25.0],
+            labels=[*("" for _ in range(segment_count)), ""],
+            marker={"colors": [*colors, "rgba(0,0,0,0)"], "line": {"color": "#0b1220", "width": 3}},
+            hole=0.70,
+            rotation=135,
+            direction="clockwise",
+            sort=False,
+            textinfo="none",
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    if show_value:
+        primary = "—" if numeric is None else f"{shown_value:.1f}"
+        primary_size = 34
+        primary_color = tone
+    else:
+        primary = label
+        primary_size = 27
+        primary_color = "#eef3fb"
+    annotations: list[dict[str, Any]] = [
+        {
+            "x": 0.5,
+            "y": 0.56,
+            "text": primary,
+            "showarrow": False,
+            "font": {"color": primary_color, "size": primary_size},
+        },
+        {
+            "x": 0.5,
+            "y": 0.39,
+            "text": label if show_value else (secondary or ""),
+            "showarrow": False,
+            "font": {"color": tone if show_value else "#aab4c5", "size": 17},
+        },
+    ]
+    figure.update_layout(
+        height=height,
+        margin={"l": 2, "r": 2, "t": 0, "b": 0},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={
+            "family": '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif',
+            "color": "#eef3fb",
+        },
+        annotations=annotations,
+    )
+    return str(
+        pio.to_html(
+            figure,
+            full_html=False,
+            include_plotlyjs=False,
             config={"displayModeBar": False, "responsive": True},
             div_id=div_id,
         )
@@ -656,6 +784,61 @@ def _feature_sources(items: list[dict[str, Any]], *, empty: str) -> str:
         if label not in labels:
             labels.append(label)
     return " · ".join(labels[:3]) or empty
+
+
+def _axis_feature_sources(
+    history: pd.DataFrame | None,
+    session_date: Any,
+    *,
+    axis: str,
+    high: bool,
+) -> list[str] | None:
+    """Rank one axis from its untruncated frozen component contributions."""
+    if history is None or history.empty or "session_date" not in history:
+        return None
+    dates = pd.to_datetime(history["session_date"], errors="coerce").dt.normalize()
+    rows = history.loc[dates.eq(pd.Timestamp(session_date).normalize())]
+    if rows.empty:
+        return None
+    return _axis_sources_from_contributions(
+        component_contributions(rows.iloc[-1]),
+        axis=axis,
+        high=high,
+    )
+
+
+def _axis_sources_from_contributions(
+    contributions: list[dict[str, Any]],
+    *,
+    axis: str,
+    high: bool,
+) -> list[str]:
+    records = [
+        record
+        for record in contributions
+        if record.get("axis") == axis
+        and (
+            float(cast(Any, record["percentile"])) >= 0.5
+            if high
+            else float(cast(Any, record["percentile"])) <= 0.5
+        )
+    ]
+    records.sort(
+        key=lambda record: (
+            -float(cast(Any, record["contribution"]))
+            if high
+            else float(cast(Any, record["contribution"])),
+            str(record["id"]),
+        )
+    )
+    labels: list[str] = []
+    for record in records:
+        feature_refs = record.get("feature_refs")
+        feature = str(feature_refs[0]) if isinstance(feature_refs, list) and feature_refs else ""
+        label = FEATURE_SHORT_LABELS.get(feature, feature or "指标")
+        if label not in labels:
+            labels.append(label)
+    return labels[:3]
 
 
 def _probability_mode_label(event: dict[str, Any]) -> tuple[str, str]:
@@ -929,6 +1112,11 @@ def render_dashboard(
     pressure_label = PRESSURE_LABELS.get(pressure, pressure)
     direction_label = DIRECTION_LABELS.get(direction, direction)
     phase_label = PHASE_LABELS.get(phase, phase)
+    structure_answer = _answer_label("carry", answers.get("carry", "UNKNOWN"))
+    shock_answer = _answer_label("shock", answers.get("shock", "UNKNOWN"))
+    hard_acute_copy = (
+        "急性压力已确认" if diagnostics_map.get("hard_acute") else "尚未形成急性压力"
+    )
 
     main_gauge = _indicator_html(
         baseline,
@@ -938,27 +1126,28 @@ def render_dashboard(
         include_plotlyjs=True,
         show_number=False,
     )
-    short_gauge = _indicator_html(
+    short_gauge = _radial_indicator_html(
         scores.get("shock"),
         div_id="short-temperature-gauge",
         tone="#ff7a1a",
-        height=130,
-        compact=True,
+        label=shock_answer,
+        height=154,
     )
-    composite_gauge = _indicator_html(
+    composite_gauge = _radial_indicator_html(
         baseline,
         div_id="composite-judgment-gauge",
-        tone="#c8d2df",
-        height=130,
-        compact=True,
+        tone="#8f9bb0",
+        label=pressure_label,
+        secondary=hard_acute_copy,
+        height=154,
+        show_value=False,
     )
-    stability_gauge = _indicator_html(
+    stability_gauge = _radial_indicator_html(
         structure_stability,
         div_id="structure-stability-gauge",
         tone="#27c4db",
-        height=130,
-        compact=True,
-        reverse_semantics=True,
+        label=structure_answer,
+        height=154,
     )
 
     axis_cards_parts: list[str] = []
@@ -1061,8 +1250,64 @@ def render_dashboard(
     repair_evidence = story.get("repair_evidence") or []
     triggers = story.get("structural_triggers") or []
     changes_view = story.get("what_changes_the_view") or []
-    driver_sources = _feature_sources(drivers, empty="暂无突出驱动")
-    counter_sources = _feature_sources(counters, empty="暂无结构缓冲")
+    shock_drivers = [
+        item
+        for item in drivers
+        if str(item.get("evidence_id", "")).startswith("shock.")
+    ]
+    carry_counters = [
+        item
+        for item in counters
+        if str(item.get("evidence_id", "")).startswith("carry.")
+    ]
+    frozen_contributions = diagnostics_map.get("component_contributions")
+    shock_axis_sources: list[str] | None
+    carry_axis_sources: list[str] | None
+    if isinstance(frozen_contributions, list):
+        normalized_contributions = [
+            cast(dict[str, Any], item)
+            for item in frozen_contributions
+            if isinstance(item, dict)
+        ]
+        shock_axis_sources = _axis_sources_from_contributions(
+            normalized_contributions,
+            axis="shock",
+            high=True,
+        )
+        carry_axis_sources = _axis_sources_from_contributions(
+            normalized_contributions,
+            axis="carry_risk",
+            high=False,
+        )
+    else:
+        shock_axis_sources = _axis_feature_sources(
+            history,
+            snapshot["session_date"],
+            axis="shock",
+            high=True,
+        )
+        carry_axis_sources = _axis_feature_sources(
+            history,
+            snapshot["session_date"],
+            axis="carry_risk",
+            high=False,
+        )
+    driver_sources = (
+        " · ".join(shock_axis_sources) or "Shock 各分量均未高于历史中位"
+        if shock_axis_sources is not None
+        else _feature_sources(
+            shock_drivers,
+            empty="Shock 分量未进入全局证据榜",
+        )
+    )
+    counter_sources = (
+        " · ".join(carry_axis_sources) or "Carry 各分量均未低于历史中位"
+        if carry_axis_sources is not None
+        else _feature_sources(
+            carry_counters,
+            empty="Carry 分量未进入全局证据榜",
+        )
+    )
     if drivers and counters:
         conflict_summary = (
             f"升温证据与结构缓冲同时存在；当日{'已有' if triggers else '没有'}结构触发，"
@@ -1073,9 +1318,6 @@ def render_dashboard(
     else:
         conflict_summary = f"当前没有结构触发，冻结状态机发布为“{phase_label}”。"
     freshness_class = "" if data_status == "OK" else " not-ok"
-    structure_answer = _answer_label("carry", answers.get("carry", "UNKNOWN"))
-    shock_answer = _answer_label("shock", answers.get("shock", "UNKNOWN"))
-    hard_acute_copy = "急性压力已确认" if diagnostics_map.get("hard_acute") else "尚未形成急性压力"
     verdict = _verdict(story, data_status)
     market_summary = _market_summary(story, diagnostics_map)
     outlook = _outlook_label(answers.get("outlook", "UNKNOWN"))
@@ -1089,9 +1331,9 @@ def render_dashboard(
 <header class="topbar">
   <div class="brand">MatVIX · 期权气象站</div>
   <div class="freshness" id="runtime-status"><span class="dot{freshness_class}" aria-hidden="true"></span>
-    <span data-live-field="data_status">{html.escape(data_status_label)}</span> · 数据截面
+    <span id="runtime-status-text"><span data-live-field="data_status">{html.escape(data_status_label)}</span> · 数据截面
     <span data-live-field="session_date">{html.escape(str(snapshot['session_date']))}</span> · 正式可用
-    <span data-live-field="decision_as_of">{html.escape(decision_label)}</span>
+    <span data-live-field="decision_as_of">{html.escape(decision_label)}</span></span>
   </div>
   <button class="method-button" type="button" data-open-panel="quant-panel" aria-controls="quant-panel" aria-expanded="false">方法与口径</button>
 </header>
@@ -1115,20 +1357,17 @@ def render_dashboard(
     <article class="triad-card">
       <div class="instrument-title orange">短端温度</div>
       <div class="instrument-plot" role="img" aria-label="短端温度等于 Shock {_fmt_score(scores.get('shock'))}">{short_gauge}</div>
-      <div class="instrument-answer" style="color:#ff9f1a">{html.escape(shock_answer)}</div>
       <div class="driver-line">主要驱动：{html.escape(driver_sources)}</div>
       <div class="instrument-copy">短端温度即 Shock 分数，反映前端保险价格的即时热度</div>
     </article>
     <article class="triad-card">
       <div class="instrument-title muted">综合判断</div>
       <div class="instrument-plot" role="img" aria-label="综合压力 {_fmt_score(baseline)}，{html.escape(pressure_label)}">{composite_gauge}</div>
-      <div class="instrument-answer">{html.escape(pressure_label)} · {html.escape(hard_acute_copy)}</div>
       <div class="instrument-copy">摘要阶段：{html.escape(phase_label)}；按确认规则发布，不是五轴简单投票</div>
     </article>
     <article class="triad-card">
       <div class="instrument-title cyan">结构稳定度</div>
       <div class="instrument-plot" role="img" aria-label="结构稳定度 {_fmt_score(structure_stability)}，等于一百减 CarryRisk">{stability_gauge}</div>
-      <div class="instrument-answer" style="color:#27c4db">{html.escape(structure_answer)}</div>
       <div class="driver-line">主要缓冲：{html.escape(counter_sources)}</div>
       <div class="stability-note">结构稳定度 = 100 − CarryRisk，仅作反向展示，不是新模型或独立信号</div>
     </article>

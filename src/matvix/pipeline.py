@@ -21,6 +21,10 @@ from matvix.probability.engine import (
 )
 from matvix.probability.targets import add_event_statuses
 from matvix.probability.walk_forward import ProbabilitySpec
+from matvix.source_identity import (
+    admit_official_observations,
+    admit_official_vx_settlements,
+)
 from matvix.state.scores import add_percentiles_and_scores
 from matvix.state.transitions import build_state_table
 from matvix.storage import read_json, read_parquet, write_json, write_parquet
@@ -75,11 +79,15 @@ def build_state_history(
     minimum_valid: int = 504,
     formal_chain: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    observation_candidates = (
+        admit_official_observations(observations) if formal_chain else observations
+    )
+    vx_candidates = admit_official_vx_settlements(vx_contracts) if formal_chain else vx_contracts
     admitted_observations = select_historical_point_in_time(
-        observations, entity_columns=["series_id"], formal_only=formal_chain
+        observation_candidates, entity_columns=["series_id"], formal_only=formal_chain
     )
     admitted_vx = select_historical_point_in_time(
-        vx_contracts, entity_columns=["contract_id"], formal_only=formal_chain
+        vx_candidates, entity_columns=["contract_id"], formal_only=formal_chain
     )
     wide = observations_to_wide(admitted_observations)
     vintages = daily_vintage_summary(admitted_observations)
@@ -152,13 +160,15 @@ def _manifest_for_session(
     session_date: pd.Timestamp,
 ) -> pd.DataFrame:
     session = pd.Timestamp(session_date).normalize()
-    spot = observations.copy()
+    spot = admit_official_observations(observations)
     spot["session_date"] = pd.to_datetime(spot["session_date"]).dt.normalize()
     spot = spot.loc[spot["session_date"] == session]
     if not spot.empty:
         spot = filter_as_of(spot, decision_as_of(session))
     admitted_vx = select_historical_point_in_time(
-        vx_contracts, entity_columns=["contract_id"], formal_only=True
+        admit_official_vx_settlements(vx_contracts),
+        entity_columns=["contract_id"],
+        formal_only=True,
     )
     curve = select_standard_monthly_curve(admitted_vx, session, count=6)
     fields = ["series_id", "session_date", "revision_id"]

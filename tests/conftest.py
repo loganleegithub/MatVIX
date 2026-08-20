@@ -9,6 +9,7 @@ import pytest
 
 from matvix.calendar import decision_as_of, observed_at_eod, sessions_in_range
 from matvix.constants import LOGISTIC_FEATURES
+from matvix.source_identity import OFFICIAL_OBSERVATION_IDENTITIES, VX_SETTLE_IDENTITY
 
 
 @pytest.fixture
@@ -42,8 +43,8 @@ def make_curve(
                 "series_id": "VX_SETTLE",
                 "value": float(settle),
                 "unit": "vix_points",
-                "source": "TEST",
-                "source_symbol": "VX_STANDARD_MONTHLY",
+                "source": VX_SETTLE_IDENTITY.source,
+                "source_symbol": VX_SETTLE_IDENTITY.source_symbol,
                 "observed_at": observed_at_eod(session).isoformat(),
                 "available_at": decision_as_of(session).isoformat(),
                 "ingested_at": datetime.now(UTC).isoformat(),
@@ -91,14 +92,15 @@ def make_observations(
             "SPX_CLOSE": 4500.0 * np.exp(0.00025 * i + 0.006 * np.sin(i / 9.0)),
         }
         for name in series:
+            identity = OFFICIAL_OBSERVATION_IDENTITIES[name]
             rows.append(
                 {
                     "series_id": name,
                     "session_date": day,
                     "value": float(values[name]),
                     "unit": "index_points",
-                    "source": "TEST",
-                    "source_symbol": name,
+                    "source": identity.source,
+                    "source_symbol": identity.source_symbol,
                     "observed_at": observed_at_eod(day).isoformat(),
                     "available_at": decision_as_of(day).isoformat(),
                     "ingested_at": "2026-01-01T00:00:00+00:00",

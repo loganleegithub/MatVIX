@@ -12,7 +12,6 @@ from matvix.calendar import add_sessions, decision_as_of
 from matvix.constants import (
     EVENT_HORIZONS,
     EVENT_ORDER,
-    FORMAL_VINTAGES,
     LOGISTIC_FEATURES,
 )
 from matvix.output import validate_daily_output
@@ -21,6 +20,7 @@ from matvix.probability.calibration import acceptance_metrics, apply_platt
 from matvix.probability.engine import outlook_answer, probability_for_event
 from matvix.probability.targets import add_event_statuses
 from matvix.probability.walk_forward import ProbabilitySpec, runtime_contract_status
+from matvix.source_identity import OFFICIAL_OBSERVATION_IDENTITIES, VX_SETTLE_IDENTITY
 from matvix.storage import write_json
 
 REQUIRED_SERIES = (
@@ -229,6 +229,7 @@ def _audit_real_observations(
         "session_date",
         "value",
         "source",
+        "source_symbol",
         "available_at",
         "revision_id",
         "methodology_version",
@@ -244,11 +245,13 @@ def _audit_real_observations(
     evidence: dict[str, Any] = {}
     passed = True
     for series in REQUIRED_SERIES:
+        identity = OFFICIAL_OBSERVATION_IDENTITIES[series]
         rows = frame.loc[frame["series_id"].eq(series)].copy()
         values = pd.to_numeric(rows["value"], errors="coerce")
         admitted = rows.loc[
-            rows["source"].eq("CBOE")
-            & rows["vintage_kind"].isin(FORMAL_VINTAGES)
+            rows["source"].eq(identity.source)
+            & rows["source_symbol"].eq(identity.source_symbol)
+            & rows["vintage_kind"].eq(identity.vintage_kind)
             & rows["available_at"].notna()
             & values.notna()
             & values.gt(0)
@@ -264,6 +267,11 @@ def _audit_real_observations(
             "rows": len(rows),
             "formal_positive_sessions": int(admitted["session_date"].nunique()),
             "snapshot_rows_available": len(latest),
+            "required_identity": {
+                "source": identity.source,
+                "source_symbol": identity.source_symbol,
+                "vintage_kind": identity.vintage_kind,
+            },
             "passed": bool(valid),
         }
     return passed, {"series": evidence, "snapshot_cutoff": cutoff.isoformat()}
@@ -280,6 +288,7 @@ def _audit_real_vx(
         "settle",
         "series_id",
         "source",
+        "source_symbol",
         "available_at",
         "revision_id",
         "methodology_version",
@@ -294,10 +303,11 @@ def _audit_real_vx(
     frame["available_at"] = pd.to_datetime(frame["available_at"], utc=True, errors="coerce")
     settles = pd.to_numeric(frame["settle"], errors="coerce")
     formal = frame.loc[
-        frame["source"].eq("CFE")
+        frame["source"].eq(VX_SETTLE_IDENTITY.source)
+        & frame["source_symbol"].eq(VX_SETTLE_IDENTITY.source_symbol)
         & frame["series_id"].eq("VX_SETTLE")
         & frame["is_standard_monthly"].fillna(False).astype(bool)
-        & frame["vintage_kind"].isin(FORMAL_VINTAGES)
+        & frame["vintage_kind"].eq(VX_SETTLE_IDENTITY.vintage_kind)
         & frame["available_at"].notna()
         & frame["contract_id"].notna()
         & frame["revision_id"].notna()
@@ -330,6 +340,11 @@ def _audit_real_vx(
         "formal_positive_sessions": int(formal["session_date"].nunique()),
         "snapshot_contracts_available": int(latest_raw["contract_id"].nunique()),
         "selected_curve_matches_raw": bool(selected_match),
+        "required_identity": {
+            "source": VX_SETTLE_IDENTITY.source,
+            "source_symbol": VX_SETTLE_IDENTITY.source_symbol,
+            "vintage_kind": VX_SETTLE_IDENTITY.vintage_kind,
+        },
         "snapshot_cutoff": cutoff.isoformat(),
     }
 

@@ -4,10 +4,13 @@ import copy
 
 import numpy as np
 import pandas as pd
-from conftest import base_state_frame
+import pytest
+from conftest import base_state_frame, make_observations, make_vx_history
 
 from matvix.acceptance import (
     _audit_oof_training_boundaries,
+    _audit_real_observations,
+    _audit_real_vx,
     _completed_calibrated_validation,
     _platt_row_is_arithmetically_valid,
     build_real_acceptance_report,
@@ -117,6 +120,75 @@ def test_invalid_probability_arithmetic_is_a_failed_acceptance_gate() -> None:
     assert (
         "uplift must equal probability - base_rate" in contract["evidence"]["error"]  # type: ignore[index]
     )
+
+
+@pytest.fixture(scope="module")
+def real_coverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp, pd.Series]:
+    observations = make_observations("2021-12-01", "2025-01-02")
+    sessions = pd.DatetimeIndex(sorted(pd.to_datetime(observations["session_date"]).unique()))
+    vx = make_vx_history(sessions)
+    snapshot_session = sessions[-1]
+    latest_curve = vx.loc[pd.to_datetime(vx["session_date"]).eq(snapshot_session)]
+    latest = pd.Series(
+        {
+            "vx_contract_ids": latest_curve["contract_id"].to_numpy(),
+            "vx_settles": latest_curve["settle"].to_numpy(),
+        }
+    )
+    return observations, vx, snapshot_session, latest
+
+
+@pytest.mark.parametrize(
+    ("column", "wrong_value"),
+    [
+        ("source", "FRED"),
+        ("source_symbol", "SP500"),
+        ("vintage_kind", "OBSERVED_PIT"),
+    ],
+)
+def test_real_observation_audit_rejects_wrong_source_identity(
+    real_coverage_inputs: tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp, pd.Series],
+    column: str,
+    wrong_value: str,
+) -> None:
+    observations, _, snapshot_session, _ = real_coverage_inputs
+    changed = observations.copy()
+    mask = pd.to_datetime(changed["session_date"]).eq(snapshot_session) & changed["series_id"].eq(
+        "SPX_CLOSE"
+    )
+    changed.loc[mask, column] = wrong_value
+
+    baseline_passed, _ = _audit_real_observations(observations, snapshot_session)
+    changed_passed, evidence = _audit_real_observations(changed, snapshot_session)
+
+    assert baseline_passed
+    assert not changed_passed
+    assert evidence["series"]["SPX_CLOSE"]["snapshot_rows_available"] == 0
+
+
+@pytest.mark.parametrize(
+    ("column", "wrong_value"),
+    [
+        ("source", "CBOE"),
+        ("source_symbol", "VX_WEEKLY"),
+        ("vintage_kind", "OBSERVED_PIT"),
+    ],
+)
+def test_real_vx_audit_rejects_wrong_source_identity(
+    real_coverage_inputs: tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp, pd.Series],
+    column: str,
+    wrong_value: str,
+) -> None:
+    _, vx, snapshot_session, latest = real_coverage_inputs
+    changed = vx.copy()
+    changed.loc[pd.to_datetime(changed["session_date"]).eq(snapshot_session), column] = wrong_value
+
+    baseline_passed, _ = _audit_real_vx(vx, snapshot_session, latest)
+    changed_passed, evidence = _audit_real_vx(changed, snapshot_session, latest)
+
+    assert baseline_passed
+    assert not changed_passed
+    assert evidence["snapshot_contracts_available"] == 0
 
 
 def test_validation_requires_252_completed_calibrated_oof_but_may_reject_model() -> None:
