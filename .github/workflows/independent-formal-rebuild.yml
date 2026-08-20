@@ -1,0 +1,234 @@
+name: MatVIX corrected formal rebuild
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  formal-rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      PRODUCTION_SHA: f57e7f5efe2480b7f8a170b4c094459698fc4993
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install exact environment
+        run: |
+          mkdir -p audit_formal/logs audit_formal/market_data audit_formal/wheelhouse_cp313
+          python -m pip install -r requirements.lock 2>&1 | tee audit_formal/logs/install_runtime.txt
+          python -m pip install -e . --no-deps 2>&1 | tee audit_formal/logs/install_package.txt
+          python -m pip install pytest==9.0.2 ruff==0.13.3 mypy==1.18.2 2>&1 | tee audit_formal/logs/install_dev.txt
+          python -m pip freeze | sort > audit_formal/logs/pip_freeze.txt
+          python -m pip download --only-binary=:all: --no-deps \
+            --python-version 313 --implementation cp --abi cp313 \
+            --platform manylinux_2_28_x86_64 pyarrow==25.0.0 \
+            -d audit_formal/wheelhouse_cp313 2>&1 | tee audit_formal/logs/download_pyarrow_cp313.txt
+          python -m pip download --only-binary=:all: --no-deps \
+            --python-version 313 --implementation cp --abi cp313 \
+            --platform manylinux2014_x86_64 scikit-learn==1.7.2 \
+            -d audit_formal/wheelhouse_cp313 2>&1 | tee audit_formal/logs/download_sklearn_cp313.txt
+
+      - name: Re-run source gates
+        id: source_gates
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          status=0
+          python -m matvix doctor --project-dir . 2>&1 | tee audit_formal/logs/doctor.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          python -m pytest -q -p no:cacheprovider 2>&1 | tee audit_formal/logs/pytest.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          ruff check . 2>&1 | tee audit_formal/logs/ruff_check.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          ruff format --check . 2>&1 | tee audit_formal/logs/ruff_format.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          mypy src/matvix 2>&1 | tee audit_formal/logs/mypy.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          exit "$status"
+
+      - name: Download official Cboe and CFE inputs
+        id: vendor
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python -m matvix download-data \
+            --output-dir data/raw/formal_vendor \
+            --start-year 2013 --end-year 2027 \
+            2>&1 | tee audit_formal/logs/download_data.txt
+          download_rc=${PIPESTATUS[0]}
+          cfe_count=$(find data/raw/formal_vendor/cfe_vx -type f -name 'VX_*.csv' 2>/dev/null | wc -l)
+          cboe_count=$(find data/raw/formal_vendor/cboe -type f -name '*_History.csv' 2>/dev/null | wc -l)
+          printf 'download_rc=%s\ncboe_files=%s\ncfe_files=%s\n' "$download_rc" "$cboe_count" "$cfe_count" \
+            | tee audit_formal/logs/vendor_completion.txt
+          find data/raw/formal_vendor -type f -print0 | sort -z | xargs -0 -r sha256sum \
+            > audit_formal/formal_vendor_sha256.txt
+          if [ "$cboe_count" -eq 6 ] && [ "$cfe_count" -ge 172 ] \
+             && [ -f data/raw/formal_vendor/cfe_vx/VX_2027-04-21.csv ]; then
+            exit 0
+          fi
+          exit "$download_rc"
+
+      - name: Download official SPX and Yahoo tradable proxies
+        id: prices
+        continue-on-error: true
+        run: |
+          python - <<'PY' 2>&1 | tee audit_formal/logs/download_market_prices.txt
+          from datetime import UTC, datetime
+          from pathlib import Path
+          from urllib.parse import quote
+          import time
+          import pandas as pd
+          import requests
+
+          out = Path('audit_formal/market_data')
+          out.mkdir(parents=True, exist_ok=True)
+          headers = {'User-Agent': 'Mozilla/5.0 MatVIX-independent-validation/1.0'}
+
+          url = 'https://cdn.cboe.com/api/global/us_indices/daily_prices/SPX_History.csv'
+          response = requests.get(url, headers=headers, timeout=60)
+          response.raise_for_status()
+          (out / 'SPX_CBOE_raw.csv').write_bytes(response.content)
+          raw = pd.read_csv(out / 'SPX_CBOE_raw.csv')
+          cols = {str(c).strip().upper(): c for c in raw.columns}
+          value_col = cols.get('CLOSE') or cols.get('SPX')
+          if 'DATE' not in cols or value_col is None:
+              raise RuntimeError(f'Unexpected official SPX columns: {list(raw.columns)}')
+          spx = raw[[cols['DATE'], value_col]].rename(columns={cols['DATE']: 'DATE', value_col: 'CLOSE'})
+          spx['DATE'] = pd.to_datetime(spx['DATE'], errors='raise').dt.date.astype(str)
+          spx['CLOSE'] = pd.to_numeric(spx['CLOSE'], errors='raise')
+          spx = spx.sort_values('DATE').drop_duplicates('DATE', keep='last')
+          spx.to_csv(out / 'SPX_CBOE.csv', index=False)
+          print('CBOE_SPX', len(spx), spx.DATE.iloc[0], spx.DATE.iloc[-1])
+
+          def yahoo(symbol: str) -> pd.DataFrame:
+              endpoint = f'https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe="")}'
+              params = {
+                  'period1': int(datetime(2013, 1, 1, tzinfo=UTC).timestamp()),
+                  'period2': int(datetime.now(UTC).timestamp()) + 86400,
+                  'interval': '1d', 'events': 'history', 'includeAdjustedClose': 'true',
+              }
+              last = None
+              for attempt in range(6):
+                  last = requests.get(endpoint, params=params, headers=headers, timeout=60)
+                  if last.ok:
+                      break
+                  time.sleep(2 ** attempt)
+              if last is None or not last.ok:
+                  raise RuntimeError(f'Yahoo {symbol} failed')
+              (out / f'{symbol}_raw.json').write_text(last.text, encoding='utf-8')
+              result = last.json()['chart']['result'][0]
+              ts = pd.to_datetime(result['timestamp'], unit='s', utc=True).tz_convert('America/New_York')
+              q = result['indicators']['quote'][0]
+              adj = result['indicators'].get('adjclose', [{}])[0].get('adjclose')
+              frame = pd.DataFrame({
+                  'Date': ts.date,
+                  'Open': q.get('open'), 'High': q.get('high'), 'Low': q.get('low'),
+                  'Close': q.get('close'),
+                  'AdjClose': adj if adj is not None else q.get('close'),
+                  'Volume': q.get('volume'),
+              })
+              return frame.dropna(subset=['Date', 'Close']).drop_duplicates('Date', keep='last').sort_values('Date')
+
+          for symbol in ['SVXY', 'VIXY', 'SPY']:
+              frame = yahoo(symbol)
+              frame.to_csv(out / f'{symbol}_YAHOO_RESEARCH.csv', index=False)
+              print(symbol, len(frame), frame.Date.iloc[0], frame.Date.iloc[-1])
+          PY
+
+      - name: Build formal history, probability and acceptance
+        id: rebuild
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          status=0
+          python -m matvix import-data \
+            --cboe-dir data/raw/formal_vendor/cboe \
+            --cfe-dir data/raw/formal_vendor/cfe_vx \
+            --spx-csv audit_formal/market_data/SPX_CBOE.csv \
+            --spx-source CBOE --project-dir . \
+            2>&1 | tee audit_formal/logs/import_data.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          python -m matvix build-history --project-dir . \
+            2>&1 | tee audit_formal/logs/build_history.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          timeout 120m python -m matvix train-probabilities \
+            --date 2026-08-18 --full-rebuild --project-dir . \
+            2>&1 | tee audit_formal/logs/train_probabilities.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          python -m matvix accept-real --date 2026-08-18 \
+            --output audit_formal/independent_acceptance_2026-08-18.json \
+            --project-dir . 2>&1 | tee audit_formal/logs/accept_real.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          exit "$status"
+
+      - name: Package evidence
+        if: always()
+        env:
+          SOURCE_GATES: ${{ steps.source_gates.outcome }}
+          VENDOR: ${{ steps.vendor.outcome }}
+          PRICES: ${{ steps.prices.outcome }}
+          REBUILD: ${{ steps.rebuild.outcome }}
+        run: |
+          git archive --format=tar.gz --prefix=MatVIX/ \
+            -o audit_formal/MatVIX_PRODUCTION_HEAD_source.tar.gz "$PRODUCTION_SHA"
+          sha256sum audit_formal/MatVIX_PRODUCTION_HEAD_source.tar.gz \
+            > audit_formal/MatVIX_PRODUCTION_HEAD_source.tar.gz.sha256
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          roots = [Path('data/raw/formal_vendor'), Path('data/raw'), Path('data/processed'), Path('data/probability'), Path('outputs/daily')]
+          rows = []
+          seen = set()
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in sorted(p for p in root.rglob('*') if p.is_file()):
+                  key = str(path)
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  rows.append({'path': key, 'bytes': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+          Path('audit_formal/artifact_inventory.json').write_text(json.dumps(rows, indent=2), encoding='utf-8')
+          result = {
+              'production_sha': os.environ['PRODUCTION_SHA'],
+              'source_gates': os.environ['SOURCE_GATES'],
+              'vendor': os.environ['VENDOR'],
+              'prices': os.environ['PRICES'],
+              'formal_rebuild': os.environ['REBUILD'],
+              'artifact_files': len(rows),
+          }
+          Path('audit_formal/workflow_result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Upload corrected formal validation bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matvix-corrected-formal-validation-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            audit_formal/
+            data/raw/formal_vendor/
+            data/raw/observations.parquet
+            data/raw/vx_contracts.parquet
+            data/processed/
+            data/probability/
+            outputs/daily/
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 6
