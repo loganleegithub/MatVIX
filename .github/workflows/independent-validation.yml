@@ -1,0 +1,209 @@
+name: MatVIX independent validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Prepare audit directories
+        run: |
+          mkdir -p audit_artifacts/logs audit_artifacts/wheelhouse audit_artifacts/market_data
+          git rev-parse HEAD | tee audit_artifacts/HEAD.txt
+          git status --short --branch | tee audit_artifacts/logs/git_status_initial.txt
+          python --version 2>&1 | tee audit_artifacts/logs/python_version.txt
+
+      - name: Install locked runtime and development tools
+        id: install
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip 2>&1 | tee audit_artifacts/logs/pip_upgrade.txt
+          python -m pip install -r requirements.lock 2>&1 | tee audit_artifacts/logs/install_runtime.txt
+          python -m pip install pytest==9.0.2 pytest-cov==7.0.0 ruff==0.13.3 mypy==1.18.2 2>&1 | tee audit_artifacts/logs/install_dev.txt
+          python -m pip freeze | sort | tee audit_artifacts/logs/pip_freeze.txt
+          python -m pip download -r requirements.lock \
+            pytest==9.0.2 pytest-cov==7.0.0 ruff==0.13.3 mypy==1.18.2 \
+            --dest audit_artifacts/wheelhouse 2>&1 | tee audit_artifacts/logs/wheelhouse.txt
+
+      - name: Runtime doctor
+        id: doctor
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m matvix doctor --project-dir . 2>&1 | tee audit_artifacts/logs/doctor.txt
+
+      - name: Compile and test source
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m compileall -q src tests 2>&1 | tee audit_artifacts/logs/compileall.txt
+          python -m pytest -q -p no:cacheprovider 2>&1 | tee audit_artifacts/logs/pytest.txt
+
+      - name: Static checks
+        id: static
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ruff check . 2>&1 | tee audit_artifacts/logs/ruff_check.txt
+          ruff format --check . 2>&1 | tee audit_artifacts/logs/ruff_format.txt
+          mypy src/matvix 2>&1 | tee audit_artifacts/logs/mypy.txt
+
+      - name: Package exact source
+        if: always()
+        run: |
+          git archive --format=tar.gz --prefix=MatVIX/ -o audit_artifacts/MatVIX_HEAD_source.tar.gz HEAD
+          sha256sum audit_artifacts/MatVIX_HEAD_source.tar.gz | tee audit_artifacts/MatVIX_HEAD_source.tar.gz.sha256
+          find src tests configs schemas -type f -print0 | sort -z | xargs -0 sha256sum > audit_artifacts/source_file_sha256.txt
+
+      - name: Download official Cboe and CFE research inputs
+        id: vendor
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          timeout 75m python -m matvix download-data \
+            --output-dir data/raw/research_vendor \
+            --start-year 2013 --end-year 2027 \
+            2>&1 | tee audit_artifacts/logs/download_data.txt
+          find data/raw/research_vendor -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum > audit_artifacts/research_vendor_sha256.txt
+          find data/raw/research_vendor -type f 2>/dev/null | sort > audit_artifacts/research_vendor_files.txt
+
+      - name: Download research-only SPX and tradable proxies
+        id: prices
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          curl -L --fail --retry 5 --retry-delay 3 \
+            'https://stooq.com/q/d/l/?s=%5Espx&i=d&d1=20130101&d2=20260820' \
+            -o audit_artifacts/market_data/spx_stooq_raw.csv 2>&1 | tee audit_artifacts/logs/download_spx.txt
+          for symbol in svxy.us vixy.us spy.us; do
+            curl -L --fail --retry 5 --retry-delay 3 \
+              "https://stooq.com/q/d/l/?s=${symbol}&i=d&d1=20130101&d2=20260820" \
+              -o "audit_artifacts/market_data/${symbol}.csv" \
+              2>&1 | tee -a audit_artifacts/logs/download_tradable_proxies.txt
+          done
+          python - <<'PY' 2>&1 | tee audit_artifacts/logs/prepare_spx.txt
+          from pathlib import Path
+          import pandas as pd
+          source = Path('audit_artifacts/market_data/spx_stooq_raw.csv')
+          frame = pd.read_csv(source)
+          required = {'Date', 'Close'}
+          if not required.issubset(frame.columns):
+              raise SystemExit(f'STOOQ_SPX_COLUMNS={list(frame.columns)}')
+          output = frame[['Date', 'Close']].rename(columns={'Date': 'DATE', 'Close': 'CLOSE'})
+          output['DATE'] = pd.to_datetime(output['DATE'], errors='raise').dt.date.astype(str)
+          output['CLOSE'] = pd.to_numeric(output['CLOSE'], errors='raise')
+          output = output.sort_values('DATE').drop_duplicates('DATE', keep='last')
+          output.to_csv('audit_artifacts/market_data/SPX_STOOQ_RESEARCH.csv', index=False)
+          print({'rows': len(output), 'first': output.DATE.iloc[0], 'last': output.DATE.iloc[-1]})
+          PY
+
+      - name: Build research-only historical state and probability artifacts
+        id: rebuild
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m matvix import-data \
+            --cboe-dir data/raw/research_vendor/cboe \
+            --cfe-dir data/raw/research_vendor/cfe_vx \
+            --spx-csv audit_artifacts/market_data/SPX_STOOQ_RESEARCH.csv \
+            --spx-source STOOQ_RESEARCH \
+            --project-dir . 2>&1 | tee audit_artifacts/logs/import_data.txt
+          python -m matvix build-history --project-dir . 2>&1 | tee audit_artifacts/logs/build_history.txt
+          timeout 90m python -m matvix train-probabilities \
+            --date 2026-08-18 --full-rebuild --project-dir . \
+            2>&1 | tee audit_artifacts/logs/train_probabilities.txt
+          python -m matvix accept-real \
+            --date 2026-08-18 \
+            --output audit_artifacts/research_acceptance_2026-08-18.json \
+            --project-dir . 2>&1 | tee audit_artifacts/logs/research_acceptance.txt
+
+      - name: Inventory generated research artifacts
+        if: always()
+        run: |
+          python - <<'PY' 2>&1 | tee audit_artifacts/logs/generated_inventory.txt
+          from pathlib import Path
+          import hashlib, json
+          roots = [Path('data/processed'), Path('data/probability'), Path('outputs/daily')]
+          rows = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in sorted(p for p in root.rglob('*') if p.is_file()):
+                  h = hashlib.sha256(path.read_bytes()).hexdigest()
+                  rows.append({'path': str(path), 'bytes': path.stat().st_size, 'sha256': h})
+          Path('audit_artifacts/generated_artifact_inventory.json').write_text(
+              json.dumps(rows, indent=2, ensure_ascii=False), encoding='utf-8'
+          )
+          print(json.dumps({'files': len(rows), 'bytes': sum(r['bytes'] for r in rows)}, indent=2))
+          PY
+          tar -czf audit_artifacts/research_generated_artifacts.tar.gz \
+            $(test -d data/processed && echo data/processed) \
+            $(test -d data/probability && echo data/probability) \
+            $(test -d outputs/daily && echo outputs/daily) \
+            2>/dev/null || true
+          sha256sum audit_artifacts/research_generated_artifacts.tar.gz 2>/dev/null > audit_artifacts/research_generated_artifacts.tar.gz.sha256 || true
+
+      - name: Write machine-readable workflow result
+        if: always()
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          DOCTOR_OUTCOME: ${{ steps.doctor.outcome }}
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+          STATIC_OUTCOME: ${{ steps.static.outcome }}
+          VENDOR_OUTCOME: ${{ steps.vendor.outcome }}
+          PRICES_OUTCOME: ${{ steps.prices.outcome }}
+          REBUILD_OUTCOME: ${{ steps.rebuild.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = {
+              'install': os.environ['INSTALL_OUTCOME'],
+              'doctor': os.environ['DOCTOR_OUTCOME'],
+              'tests': os.environ['TEST_OUTCOME'],
+              'static': os.environ['STATIC_OUTCOME'],
+              'official_cboe_cfe_download': os.environ['VENDOR_OUTCOME'],
+              'research_market_prices': os.environ['PRICES_OUTCOME'],
+              'research_rebuild': os.environ['REBUILD_OUTCOME'],
+              'spx_source': 'STOOQ_RESEARCH (non-formal substitution)',
+          }
+          Path('audit_artifacts/workflow_result.json').write_text(
+              json.dumps(result, indent=2), encoding='utf-8'
+          )
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Upload independent validation bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matvix-independent-validation-${{ github.sha }}
+          path: |
+            audit_artifacts/
+            data/processed/
+            data/probability/
+            outputs/daily/
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 6
