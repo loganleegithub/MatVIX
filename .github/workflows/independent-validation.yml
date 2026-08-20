@@ -11,9 +11,11 @@ permissions:
 jobs:
   independent-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
+    env:
+      PRODUCTION_SHA: f57e7f5efe2480b7f8a170b4c094459698fc4993
     steps:
-      - name: Checkout exact candidate
+      - name: Checkout audit branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -27,17 +29,19 @@ jobs:
       - name: Prepare audit directories
         run: |
           mkdir -p audit_artifacts/logs audit_artifacts/wheelhouse audit_artifacts/market_data
-          git rev-parse HEAD | tee audit_artifacts/HEAD.txt
+          git rev-parse HEAD | tee audit_artifacts/AUDIT_HEAD.txt
+          git rev-parse "$PRODUCTION_SHA" | tee audit_artifacts/PRODUCTION_HEAD.txt
           git status --short --branch | tee audit_artifacts/logs/git_status_initial.txt
           python --version 2>&1 | tee audit_artifacts/logs/python_version.txt
 
-      - name: Install locked runtime and development tools
+      - name: Install locked runtime, package and development tools
         id: install
         continue-on-error: true
         run: |
           set -o pipefail
           python -m pip install --upgrade pip 2>&1 | tee audit_artifacts/logs/pip_upgrade.txt
           python -m pip install -r requirements.lock 2>&1 | tee audit_artifacts/logs/install_runtime.txt
+          python -m pip install -e . --no-deps 2>&1 | tee audit_artifacts/logs/install_package.txt
           python -m pip install pytest==9.0.2 pytest-cov==7.0.0 ruff==0.13.3 mypy==1.18.2 2>&1 | tee audit_artifacts/logs/install_dev.txt
           python -m pip freeze | sort | tee audit_artifacts/logs/pip_freeze.txt
           python -m pip download -r requirements.lock \
@@ -62,81 +66,164 @@ jobs:
       - name: Static checks
         id: static
         continue-on-error: true
+        shell: bash
         run: |
-          set -o pipefail
+          set +e
+          status=0
           ruff check . 2>&1 | tee audit_artifacts/logs/ruff_check.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
           ruff format --check . 2>&1 | tee audit_artifacts/logs/ruff_format.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
           mypy src/matvix 2>&1 | tee audit_artifacts/logs/mypy.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          git diff --check 2>&1 | tee audit_artifacts/logs/git_diff_check.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          exit "$status"
 
-      - name: Package exact source
+      - name: Package exact production source
         if: always()
         run: |
-          git archive --format=tar.gz --prefix=MatVIX/ -o audit_artifacts/MatVIX_HEAD_source.tar.gz HEAD
-          sha256sum audit_artifacts/MatVIX_HEAD_source.tar.gz | tee audit_artifacts/MatVIX_HEAD_source.tar.gz.sha256
-          find src tests configs schemas -type f -print0 | sort -z | xargs -0 sha256sum > audit_artifacts/source_file_sha256.txt
+          git archive --format=tar.gz --prefix=MatVIX/ \
+            -o audit_artifacts/MatVIX_PRODUCTION_HEAD_source.tar.gz "$PRODUCTION_SHA"
+          sha256sum audit_artifacts/MatVIX_PRODUCTION_HEAD_source.tar.gz \
+            | tee audit_artifacts/MatVIX_PRODUCTION_HEAD_source.tar.gz.sha256
+          git ls-tree -r --name-only "$PRODUCTION_SHA" | sort > audit_artifacts/production_tree_paths.txt
+          find src tests configs schemas -type f -print0 | sort -z | xargs -0 sha256sum \
+            > audit_artifacts/audit_worktree_source_file_sha256.txt
 
       - name: Download official Cboe and CFE research inputs
         id: vendor
         continue-on-error: true
         run: |
           set -o pipefail
-          timeout 75m python -m matvix download-data \
+          timeout 90m python -m matvix download-data \
             --output-dir data/raw/research_vendor \
             --start-year 2013 --end-year 2027 \
             2>&1 | tee audit_artifacts/logs/download_data.txt
-          find data/raw/research_vendor -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum > audit_artifacts/research_vendor_sha256.txt
-          find data/raw/research_vendor -type f 2>/dev/null | sort > audit_artifacts/research_vendor_files.txt
+          find data/raw/research_vendor -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum \
+            > audit_artifacts/research_vendor_sha256.txt
+          find data/raw/research_vendor -type f 2>/dev/null | sort \
+            > audit_artifacts/research_vendor_files.txt
 
-      - name: Download research-only SPX and tradable proxies
+      - name: Download SPX and tradable research proxies
         id: prices
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python - <<'PY' 2>&1 | tee audit_artifacts/logs/download_market_prices.txt
+          from __future__ import annotations
+          from datetime import UTC, datetime
+          from pathlib import Path
+          from urllib.parse import quote
+          import json, time
+          import pandas as pd
+          import requests
+
+          out = Path('audit_artifacts/market_data')
+          out.mkdir(parents=True, exist_ok=True)
+          headers = {'User-Agent': 'Mozilla/5.0 MatVIX-independent-validation/1.0'}
+
+          # Prefer the official Cboe daily-price naming convention. Only label the file
+          # CBOE when the official host returns a valid DATE/CLOSE CSV.
+          cboe_url = 'https://cdn.cboe.com/api/global/us_indices/daily_prices/SPX_History.csv'
+          spx_source = None
+          try:
+              r = requests.get(cboe_url, headers=headers, timeout=60)
+              print('CBOE_SPX_HTTP', r.status_code, r.headers.get('content-type'))
+              if r.ok:
+                  (out / 'SPX_CBOE_raw.csv').write_bytes(r.content)
+                  frame = pd.read_csv(out / 'SPX_CBOE_raw.csv')
+                  cols = {str(c).strip().upper(): c for c in frame.columns}
+                  if {'DATE', 'CLOSE'}.issubset(cols):
+                      spx = frame[[cols['DATE'], cols['CLOSE']]].rename(
+                          columns={cols['DATE']: 'DATE', cols['CLOSE']: 'CLOSE'}
+                      )
+                      spx_source = 'CBOE'
+          except Exception as exc:
+              print('CBOE_SPX_ERROR', repr(exc))
+
+          def yahoo_history(symbol: str) -> pd.DataFrame:
+              now = int(datetime.now(UTC).timestamp()) + 86400
+              url = f'https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe="")}'
+              params = {
+                  'period1': int(datetime(2013, 1, 1, tzinfo=UTC).timestamp()),
+                  'period2': now,
+                  'interval': '1d',
+                  'events': 'history',
+                  'includeAdjustedClose': 'true',
+              }
+              last = None
+              for attempt in range(6):
+                  response = requests.get(url, params=params, headers=headers, timeout=60)
+                  last = response
+                  if response.ok:
+                      break
+                  time.sleep(2 ** attempt)
+              if last is None or not last.ok:
+                  raise RuntimeError(f'Yahoo {symbol} failed: {None if last is None else last.status_code}')
+              raw_path = out / f'{symbol.replace("^", "INDEX_")}_yahoo_raw.json'
+              raw_path.write_text(last.text, encoding='utf-8')
+              result = last.json()['chart']['result'][0]
+              timestamps = pd.to_datetime(result['timestamp'], unit='s', utc=True).tz_convert('America/New_York')
+              quote_rows = result['indicators']['quote'][0]
+              adj = result['indicators'].get('adjclose', [{}])[0].get('adjclose')
+              data = pd.DataFrame({
+                  'Date': timestamps.date,
+                  'Open': quote_rows.get('open'),
+                  'High': quote_rows.get('high'),
+                  'Low': quote_rows.get('low'),
+                  'Close': quote_rows.get('close'),
+                  'AdjClose': adj if adj is not None else quote_rows.get('close'),
+                  'Volume': quote_rows.get('volume'),
+              })
+              return data.dropna(subset=['Date', 'Close']).drop_duplicates('Date', keep='last').sort_values('Date')
+
+          if spx_source is None:
+              yahoo_spx = yahoo_history('^GSPC')
+              spx = yahoo_spx[['Date', 'Close']].rename(columns={'Date': 'DATE', 'Close': 'CLOSE'})
+              spx_source = 'YAHOO_RESEARCH'
+          spx['DATE'] = pd.to_datetime(spx['DATE'], errors='raise').dt.date.astype(str)
+          spx['CLOSE'] = pd.to_numeric(spx['CLOSE'], errors='coerce')
+          spx = spx.dropna(subset=['CLOSE']).sort_values('DATE').drop_duplicates('DATE', keep='last')
+          spx.to_csv(out / 'SPX_RESEARCH.csv', index=False)
+          (out / 'SPX_SOURCE.txt').write_text(spx_source + '\n', encoding='utf-8')
+          print('SPX_SOURCE', spx_source, 'ROWS', len(spx), 'RANGE', spx.DATE.iloc[0], spx.DATE.iloc[-1])
+
+          for symbol in ['SVXY', 'VIXY', 'SPY']:
+              frame = yahoo_history(symbol)
+              frame.to_csv(out / f'{symbol}_YAHOO_RESEARCH.csv', index=False)
+              print(symbol, len(frame), frame.Date.iloc[0], frame.Date.iloc[-1])
+          PY
+
+      - name: Build research historical state and probability artifacts
+        id: rebuild
         continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
-          curl -L --fail --retry 5 --retry-delay 3 \
-            'https://stooq.com/q/d/l/?s=%5Espx&i=d&d1=20130101&d2=20260820' \
-            -o audit_artifacts/market_data/spx_stooq_raw.csv 2>&1 | tee audit_artifacts/logs/download_spx.txt
-          for symbol in svxy.us vixy.us spy.us; do
-            curl -L --fail --retry 5 --retry-delay 3 \
-              "https://stooq.com/q/d/l/?s=${symbol}&i=d&d1=20130101&d2=20260820" \
-              -o "audit_artifacts/market_data/${symbol}.csv" \
-              2>&1 | tee -a audit_artifacts/logs/download_tradable_proxies.txt
-          done
-          python - <<'PY' 2>&1 | tee audit_artifacts/logs/prepare_spx.txt
-          from pathlib import Path
-          import pandas as pd
-          source = Path('audit_artifacts/market_data/spx_stooq_raw.csv')
-          frame = pd.read_csv(source)
-          required = {'Date', 'Close'}
-          if not required.issubset(frame.columns):
-              raise SystemExit(f'STOOQ_SPX_COLUMNS={list(frame.columns)}')
-          output = frame[['Date', 'Close']].rename(columns={'Date': 'DATE', 'Close': 'CLOSE'})
-          output['DATE'] = pd.to_datetime(output['DATE'], errors='raise').dt.date.astype(str)
-          output['CLOSE'] = pd.to_numeric(output['CLOSE'], errors='raise')
-          output = output.sort_values('DATE').drop_duplicates('DATE', keep='last')
-          output.to_csv('audit_artifacts/market_data/SPX_STOOQ_RESEARCH.csv', index=False)
-          print({'rows': len(output), 'first': output.DATE.iloc[0], 'last': output.DATE.iloc[-1]})
-          PY
-
-      - name: Build research-only historical state and probability artifacts
-        id: rebuild
-        continue-on-error: true
-        run: |
-          set -o pipefail
+          set +e
+          status=0
+          SPX_SOURCE=$(tr -d '\r\n' < audit_artifacts/market_data/SPX_SOURCE.txt 2>/dev/null)
+          echo "SPX_SOURCE=${SPX_SOURCE:-MISSING}" | tee audit_artifacts/logs/spx_source_used.txt
           python -m matvix import-data \
             --cboe-dir data/raw/research_vendor/cboe \
             --cfe-dir data/raw/research_vendor/cfe_vx \
-            --spx-csv audit_artifacts/market_data/SPX_STOOQ_RESEARCH.csv \
-            --spx-source STOOQ_RESEARCH \
+            --spx-csv audit_artifacts/market_data/SPX_RESEARCH.csv \
+            --spx-source "${SPX_SOURCE:-MISSING}" \
             --project-dir . 2>&1 | tee audit_artifacts/logs/import_data.txt
-          python -m matvix build-history --project-dir . 2>&1 | tee audit_artifacts/logs/build_history.txt
-          timeout 90m python -m matvix train-probabilities \
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          python -m matvix build-history --project-dir . \
+            2>&1 | tee audit_artifacts/logs/build_history.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          timeout 100m python -m matvix train-probabilities \
             --date 2026-08-18 --full-rebuild --project-dir . \
             2>&1 | tee audit_artifacts/logs/train_probabilities.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
           python -m matvix accept-real \
             --date 2026-08-18 \
             --output audit_artifacts/research_acceptance_2026-08-18.json \
             --project-dir . 2>&1 | tee audit_artifacts/logs/research_acceptance.txt
+          test ${PIPESTATUS[0]} -eq 0 || status=1
+          exit "$status"
 
       - name: Inventory generated research artifacts
         if: always()
@@ -144,14 +231,17 @@ jobs:
           python - <<'PY' 2>&1 | tee audit_artifacts/logs/generated_inventory.txt
           from pathlib import Path
           import hashlib, json
-          roots = [Path('data/processed'), Path('data/probability'), Path('outputs/daily')]
+          roots = [Path('data/raw/research_vendor'), Path('data/processed'), Path('data/probability'), Path('outputs/daily')]
           rows = []
           for root in roots:
               if not root.exists():
                   continue
               for path in sorted(p for p in root.rglob('*') if p.is_file()):
-                  h = hashlib.sha256(path.read_bytes()).hexdigest()
-                  rows.append({'path': str(path), 'bytes': path.stat().st_size, 'sha256': h})
+                  rows.append({
+                      'path': str(path),
+                      'bytes': path.stat().st_size,
+                      'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                  })
           Path('audit_artifacts/generated_artifact_inventory.json').write_text(
               json.dumps(rows, indent=2, ensure_ascii=False), encoding='utf-8'
           )
@@ -162,7 +252,8 @@ jobs:
             $(test -d data/probability && echo data/probability) \
             $(test -d outputs/daily && echo outputs/daily) \
             2>/dev/null || true
-          sha256sum audit_artifacts/research_generated_artifacts.tar.gz 2>/dev/null > audit_artifacts/research_generated_artifacts.tar.gz.sha256 || true
+          sha256sum audit_artifacts/research_generated_artifacts.tar.gz 2>/dev/null \
+            > audit_artifacts/research_generated_artifacts.tar.gz.sha256 || true
 
       - name: Write machine-readable workflow result
         if: always()
@@ -178,7 +269,9 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
+          source_file = Path('audit_artifacts/market_data/SPX_SOURCE.txt')
           result = {
+              'production_sha': os.environ['PRODUCTION_SHA'],
               'install': os.environ['INSTALL_OUTCOME'],
               'doctor': os.environ['DOCTOR_OUTCOME'],
               'tests': os.environ['TEST_OUTCOME'],
@@ -186,7 +279,7 @@ jobs:
               'official_cboe_cfe_download': os.environ['VENDOR_OUTCOME'],
               'research_market_prices': os.environ['PRICES_OUTCOME'],
               'research_rebuild': os.environ['REBUILD_OUTCOME'],
-              'spx_source': 'STOOQ_RESEARCH (non-formal substitution)',
+              'spx_source': source_file.read_text().strip() if source_file.exists() else 'MISSING',
           }
           Path('audit_artifacts/workflow_result.json').write_text(
               json.dumps(result, indent=2), encoding='utf-8'
@@ -198,9 +291,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: matvix-independent-validation-${{ github.sha }}
+          name: matvix-independent-validation-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             audit_artifacts/
+            data/raw/research_vendor/
             data/processed/
             data/probability/
             outputs/daily/
