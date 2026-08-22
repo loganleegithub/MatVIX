@@ -430,6 +430,35 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - economic relevance：阶段 F 未授权。
 - status：`BLOCKED_BY_STAGE_D`
 
+### 9.8 `PROB-CARRY-SATURATION-003`
+
+- defect_id：`PROB-CARRY-SATURATION-003`
+- severity：P1
+- layer：PROBABILITY
+- observed symptom：`PROB-CARRY-002` 的最新 252 个正式 published OOF 保留 +34.67% Brier
+  Skill，但 ECE 为 7.413%；最低概率 quintile 的预测/实际为 5.82%/13.73%，并由长 spell 主导。
+- reproduction command：只读关联现有 `outputs/probabilities/oof_ledger.parquet` 与
+  `outputs/states.parquet`，不得重训、不得读取产品价格；正式复现命令仍须等合同升版后一次执行。
+- causal evidence：最低 quintile 51 行全部 `carry_spell_age>20`，其中 68.63% 为 age>60；但 51
+  行只来自 2 个 spell，全部 7 个正例集中在其中 1 个 spell。既有 published OOF 在 development
+  的 age>20 行为 4.58%/7.94%（预测/实际，n=340），confirmation 为 17.07%/20.85%
+  （n=259），两窗均为同向低估。该证据确认的是长 spell 残差，不证明任何修补必然通过。
+- business consequence：未受限的 `log1p_carry_spell_age` 可能把极长、且独立 spell 数很少的尾部
+  外推为过低恢复概率；但不能用集中样本伪称稳定的新规律。
+- minimal repair：仅允许考虑
+  `bounded_log1p_carry_spell_age = log(1 + min(carry_spell_age, 20))`，并替换而非并列保留旧
+  `log1p_carry_spell_age`。20 只来自阶段 A 事先冻结的 `11–20 / 21–60` 业务分箱边界，不来自
+  cap 扫描。
+- rejected alternatives：ECE 放宽至 7.5%、Skill/ECE 综合效用特批、age>15 事后惩罚、cap 扫描、
+  新 calibrator/window/model、同时保留 bounded/unbounded age、外部特征包。
+- affected existing files：若合同授权，仅涉及 Carry duration fact、唯一 predictor 配置、重放完整性
+  验收与聚焦测试；不改变标签、horizon、eligibility、模型或校准器。
+- semantic/version impact：当前仅为审计缺陷；需要合同 v1.2 纯文档提交后才能修改语义代码。
+- station acceptance criterion：原 252/20/20、Brier Skill≥2%、ECE≤7% 与可靠性门一字不改；
+  development/confirmation 及 spell 集中度必须并列报告；若唯一正式重建失败则停止，不得第三次尝试。
+- economic relevance：仅修复气象站概率；阶段 D 前仍不得读取产品价格或运行经济探针。
+- status：`AUDIT_CONFIRMED_RESIDUAL / CONTRACT_AMENDMENT_REQUIRED / NOT_IMPLEMENTED`
+
 ---
 
 ## 10. Scope-to-defect 与变更预算
@@ -927,4 +956,46 @@ PRODUCT_PRICES_READ=FALSE
 NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION
+```
+
+### 13.3 `PROB-CARRY-SATURATION-003` 结果后只读残差审计
+
+本节不重训、不模拟新候选，只对 13.2 已冻结的正式 published OOF 做分解。最新 252 行的
+10 等频校准分箱中，各 quintile 对总 ECE 的绝对贡献为：
+
+```text
+Q1  1.5995 percentage points
+Q2  1.3042 percentage points
+Q3  0.8061 percentage points
+Q4  1.7620 percentage points
+Q5  1.9415 percentage points
+total = 7.4132%
+```
+
+Q1 是明确残差但不是全部误差。即使反事实地把 Q1 修到零误差、其余分箱完全不变，总 ECE 也只会
+机械降至约 5.81%；把 Q1 平均预测从 5.82% 提高至 10% 时，机械值约为 6.57%。这些只是算术
+上界诊断，不是 bounded feature 的 OOF 结果，因此不得把外部提出的 5.5%–6.5% 区间写成预期
+效果或通过保证。
+
+最新 252 行的既有正式预测按原先冻结 age 分箱为：
+
+| spell age | n | mean published p | observed rate |
+|---|---:|---:|---:|
+| 1–2 | 43 | 60.50% | 72.09% |
+| 3–5 | 28 | 44.66% | 50.00% |
+| 6–10 | 25 | 37.12% | 20.00% |
+| 11–20 | 32 | 21.26% | 0.00% |
+| 21–60 | 82 | 11.82% | 10.98% |
+| 61+ | 42 | 6.05% | 16.67% |
+
+age 61+ 的 42 行全部来自同一 spell；最低 quintile 也只有两个 spell。故这里没有足够证据授权
+灵活 spline、分段惩罚或搜索 cap。唯一仍可治理的最小候选是复用阶段 A 预先存在的 20-session
+边界做物理饱和，并用原门槛接受或拒绝。当前裁决仍是：
+
+```text
+PROB-CARRY-002=FAIL_ECE
+PROB-CARRY-SATURATION-003=AUDIT_CONFIRMED_RESIDUAL
+IMPLEMENTATION=NOT_AUTHORIZED_UNTIL_PURE_DOC_CONTRACT_V1_2
+PRODUCT_PRICES_READ=FALSE
+ECONOMIC_PROBE=NOT_RUN
 ```
