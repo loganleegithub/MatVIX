@@ -8,9 +8,9 @@
 > 原合同提交：`b1394e7aa87de3e37648ed6fd61e47a33cf22df8`
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
-> 当前裁决：`PROB-CARRY-SATURATION-003=PASS / HISTORICAL_RESEARCH_SUPPORT`
-> 下一项：`PROB-FRAGILITY-002=NEXT_AUTHORIZED`
-> 最高允许结论：`NO_STAGE_D_PASS_YET / NO_ADAPTER / NO_ECONOMIC_PROBE / NO_PRODUCTION_PROMOTION`
+> 当前裁决：`PROB-FRAGILITY-002=REJECTED_INSUFFICIENT_PUBLISHED_OOF / CONTRACT_STOP`
+> 下一项：`NONE_WITHOUT_NEW_PURE_DOCUMENT_CONTRACT`
+> 最高允许结论：`STATION_NOT_READY / STAGE_D_BLOCKED / NO_ADAPTER / NO_ECONOMIC_PROBE / NO_PRODUCTION_PROMOTION`
 
 ---
 
@@ -51,12 +51,13 @@ PROB-CAL-002
 
 `PROB-CARRY-002` 的第一版正式重建随后以 +34.67% Brier Skill、7.413% ECE 失败并停止。第 13.3
 节先完成结果后只读残差审计，2026-08-23 的人类决定再以合同 v1.2 只授权一个替换式 bounded-age
-候选：cap=20、不改任何门槛、不扫描、不读价格、只正式重建一次。该唯一重建现已通过原门，顺序为：
+候选：cap=20、不改任何门槛、不扫描、不读价格、只正式重建一次。该唯一重建通过原门；随后
+Fragility 唯一正式候选因 published OOF 不足触发第 11.1 节停止：
 
 ```text
 PROB-CARRY-SATURATION-003=PASS / HISTORICAL_RESEARCH_SUPPORT
-→ PROB-FRAGILITY-002=NEXT_AUTHORIZED
-→ NO_THIRD_CARRY_ATTEMPT
+→ PROB-FRAGILITY-002=REJECTED_INSUFFICIENT_PUBLISHED_OOF
+→ CONTRACT_STOP
 ```
 
 ---
@@ -390,7 +391,7 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - station acceptance criterion：正式 rolling-origin 252/20/20、Skill≥2%、ECE≤7%、cluster stability，
   且其余四个必需条件模型与 Broad 基准率参考分别 PASS。
 - economic relevance：仅在阶段 D 全通过后才允许适配器消费。
-- status：`AUDIT_ACCEPTED / SPEC_FROZEN / IMPLEMENTATION_AUTHORIZED`
+- status：`REJECTED_INSUFFICIENT_PUBLISHED_OOF / CONTRACT_STOP`
 
 ### 9.5 `STATE-CHURN-002`
 
@@ -515,6 +516,81 @@ NO_STAGE_B_SEMANTIC_FREEZE
 NO_V3_PROBABILITY_OR_STATE_IMPLEMENTATION
 NO_ADAPTER
 NO_ECONOMIC_PROBE
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+### 11.1 `PROB-FRAGILITY-002` 唯一正式重建与停止裁决
+
+按第 12.5 节冻结语义完成了唯一候选：当前 eligibility、四条完整 5D 天气 future facts、各自
+formal-vintage censoring、新增 `d1_log_vvix` / `spx_5d_log_momentum` 因果事实，以及以下固定
+predictor 顺序均先由聚焦测试锁定：
+
+```text
+p_neg_front_slope30
+p_d1_log_vvix
+p_d5_log_vvix
+p_neg_spx_5d_log_momentum
+```
+
+候选代码的聚焦测试、243 项完整 pytest、Ruff、Mypy、doctor 与 Schema 验证通过。随后只运行一次
+合同正式链：
+
+```bash
+.venv/bin/python -m matvix build-history --project-dir .
+.venv/bin/python -m matvix train-probabilities --full-rebuild --project-dir .
+.venv/bin/python -m matvix accept-real --date 2026-08-20 --project-dir .
+```
+
+标签 cohort 与阶段 A 完全一致：371 个 completed，158/213 正负类。可是 252 个完成标签首先只能
+作为模型训练集，首条 raw/published OOF 到 `2023-06-16` 才出现；截至固定验收日只形成 115 条
+published OOF，其中 114 条已 outcome-available，正/负为 44/70。正式模型门结果为：
+
+| 门 | 固定要求 | 实际 | 裁决 |
+|---|---:|---:|---|
+| completed published OOF | 252 | 114 | **FAIL** |
+| 正类 | 20 | 44 | PASS |
+| 负类 | 20 | 70 | PASS |
+| Brier Skill | ≥2% | 不计算 | NOT_ELIGIBLE |
+| ECE | ≤7% | 不计算 | NOT_ELIGIBLE |
+
+`real_acceptance_2026-08-20.json` 的 14 个账本、PIT、发布与运行时完整性控制均通过；其中
+`v3_oof_calibration_integrity` 对该事件明确记录
+`published_oof=115 / completed_published_available=114 / validation_complete=false / accepted=false`。
+这些控制的 PASS 只证明失败证据内部一致，不能替代 252 样本模型门，也不能写成 Fragility PASS。
+
+唯一正式候选产物 hash：
+
+```text
+states.parquet             e22b51acccaea60f97dcfe98ce561ae700b87e1239a5ca66c8f6674e5f8c4d16
+target_ledger.parquet      9e77c5be6e2f4a2b387d877b7f5184376f922301a2585077f0704382a920523e
+oof_ledger.parquet         44e7e43efb207b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770
+artifact_contract.json     42e54a87ab5d365ea3cf90dbd9bfa513d0b9a3456e8fa08c3a11f42f7a3dba00
+daily/2026-08-20.json      d24de3122be8fdd060d07b8f9d9bec7f03c65eec15bd3f19e678168653360eef
+real_acceptance.json       54c8d59d9052de39c5d1fe90e3ba07cb987eb45942a36818ce9950e52a325f31
+```
+
+合同第 5.4 节要求未通过完整概率门时从正式事件集合彻底拒绝且不留 Dashboard 半成品，因此候选
+业务代码、配置、Schema、Dashboard 与测试已从当前跟踪树移除；没有尝试第二组 feature、模型、
+窗口、阈值或 calibrator。`STATE-CHURN-002`、阶段 D、适配器以及阶段 E/F 均未启动，且未读取
+SVXY/SGOV/VXZ 价格或冻结经济探针逐日/报告内容。
+
+正式裁决：
+
+```text
+PROB-CAL-002=PASS
+PROB-BROAD-002=BASE_RATE_REFERENCE_PASS
+PROB-CARRY-002=HISTORICAL_FIRST_ATTEMPT_FAIL_RETAINED
+PROB-CARRY-SATURATION-003=PASS_HISTORICAL_RESEARCH_SUPPORT
+PROB-FRAGILITY-002=REJECTED_INSUFFICIENT_PUBLISHED_OOF
+FORMAL_FRAGILITY_MODEL=NOT_ELIGIBLE
+CONTRACT_STOP=TRUE
+STATE-CHURN-002=NOT_AUTHORIZED_TO_START_AFTER_STOP
+STAGE_D=BLOCKED
+ADAPTER=BLOCKED
+ECONOMIC_PROBE=NOT_RUN
+PRODUCT_PRICES_READ=FALSE
 NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION
@@ -853,7 +929,7 @@ ECE <= 7%
 保留本文件、阶段 A artifact hash 与 Git 提交 `3f0e394` 可复现边界的同时删除或实质复用这些行，
 使相对 `a2a8a58` 的净新增非生成 Python 与测试继续不超过 1,500 行。不得通过增加第二套框架绕过。
 
-当前阶段 B 状态：
+阶段 B 冻结提交时的状态（后续正式结果见第 11.1 节）：
 
 ```text
 STAGE_B_SEMANTICS_FROZEN
@@ -1096,7 +1172,7 @@ daily/2026-08-20.json      287ce0d5e16b94d2d5a3f5479c0c0a1ea00a42768f545a052478a
 real_acceptance.json       111169cb6ef84b9c5029c36df34475ebcedc593317bb137f32de880d8bfe9064
 ```
 
-正式裁决：
+该 Carry 提交时的裁决（已由第 11.1 节后续 Fragility 结果取代）：
 
 ```text
 PROB-CAL-002=PASS
