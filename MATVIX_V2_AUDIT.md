@@ -1,11 +1,11 @@
-# MatVIX V2 阶段 A：V1 五维业务审计与缺陷台账
+# MatVIX V2 业务审计、施工与验收台账
 
 > 审计合同：`MATVIX_V2_CONSTRUCTION_PLAN.md` 1.0
 > 审计对象：冻结的 `MATVIX_CBOE_CORE_V1`
 > 基线提交：`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`
 > 历史范围：`2013-05-20` 至 `2026-08-20`，3,334 个正式 session
 > 审计日期：2026-08-22
-> 状态：PHASE_A_COMPLETE / PHASE_B_SPEC_FROZEN / PHASE_C_DEFECTS_CLOSED / PHASE_D_KEY_GATES_PASS
+> 状态：PHASE_A_COMPLETE / PHASE_B_SPEC_FROZEN / PHASE_C_DEFECTS_CLOSED / PHASE_D_KEY_GATES_PASS / PHASE_E_COMPLETE / NO_PROMOTION
 
 ## 1. 结论先行
 
@@ -22,6 +22,10 @@ V1 仍有五项阻断 V2 的业务缺陷：
 | `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | CLOSED |
 | `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | CLOSED |
 | `PROBABILITY-001` | P1 | PROBABILITY | 概率流水线完整，但现有 broad/repair 标签不是直接 F4–F7 扩散与 carry 恢复问题，两个模型也未提供可发布增量 | CLOSED |
+
+五个 defect 均已按冻结语义关闭，但这不等于所有业务能力均通过。阶段 D 的 `PROBABILITY MODEL`
+仍为 `FAIL`；阶段 E 的 short 固定探针为 `MIXED`，因此综合经济结论为
+`NO_COMPREHENSIVE_INCREMENT`。V2 保留在开发分支，不合并 `main`、不推送、不表述为 ready。
 
 本审计没有读取任何产品价格，没有生成收益、仓位、策略、HTML、V1.1 路径，也没有读取
 `/Users/logan/MatVIX_cleanup_quarantine/`。旧 Research Shadow 数字没有作为预期答案或证据。
@@ -372,3 +376,66 @@ target/OOF 计数与重放布尔量；截至此门仍未读取 SVXY、SGOV、VXZ
 阶段 D 不计算总分。按第 21.8 节，前四个关键维度均 `PASS`，故一次冻结经济探针入口为 `PASS`；
 `PROBABILITY MODEL` 不是入口门，且其 `BASE_RATE_ONLY` 不得计作预测增量。这个入口只授权阶段 E
 按冻结合同首次读取产品价格，不是 V2 ready、策略有效或经济增量结论。
+
+## 9. 阶段 E：冻结经济探针与最终裁决
+
+阶段 D 四个关键入口门通过后，才首次执行：
+
+```bash
+.venv/bin/python -m matvix run-v2-economic-probe --project-dir .
+```
+
+探针严格共用 `session_date / decision_as_of / data_status / carry / shock / persistence`
+适配器、固定谓词、固定优先级、初始资金 USD 10,000、t+1 adjusted open、open-to-open 收益和
+单边 5bp 成本。没有按版本分支、参数优化、价格缺失填充或替代数据源。Yahoo Chart JSON API
+批次 `20260822T093334.462165Z` 对三只资产使用同一接口和参数；原始响应、请求时间、HTTP 状态和
+SHA-256 保存在本地 `data/raw/economic_probe/`，未纳入 Git。三份响应均为 HTTP 200，摘要中记录
+SGOV/SVXY/VXZ 分别为 1,565/1,577/1,577 行，原始摘要校验已逐份通过。
+
+共同样本为 1,564 个 session：首个 signal 为 2020-06-01，首个执行为 2020-06-02，收益记至
+2026-08-20。每个版本、每个探针有 1,562 个完成的 open-to-open row；总账本 9,372 行、25 列，
+`signal < execution < return-through` 全部成立，turnover 只出现 0/1/2，六条路径初始成本均为
+5bp。唯一输出是：
+
+```text
+outputs/v2_economic_probe/daily_ledger.csv
+outputs/v2_economic_probe/report.json
+outputs/v2_economic_probe/report.html
+```
+
+固定经济结果：
+
+| 探针 | V1 终值 / 总收益 / 最大回撤 / 最差20日 | V2 终值 / 总收益 / 最大回撤 / 最差20日 | V2 vs V1 |
+|---|---|---|---|
+| short | $8,140.62 / -18.59% / -23.80% / -13.15% | $10,082.71 / +0.83% / -24.54% / -13.97% | `MIXED` |
+| long | $4,015.36 / -59.85% / -61.15% / -15.88% | $11,331.71 / +13.32% / -10.93% / -8.61% | `POSITIVE` |
+| combined | $2,769.56 / -72.30% / -73.50% / -25.11% | $9,536.40 / -4.64% / -27.87% / -16.73% | `POSITIVE`（仅相对 V1） |
+
+关键归因：
+
+- short 的 V2 终值改善，但最大回撤和最差滚动20日均恶化，所以必须是 `MIXED`；其 1,562 日
+  V1/V2 position/price/cost/P&L/NAV 差异已逐日写入 `report.json`，不能靠调仓下降覆盖风险退化；
+- long 的 VXZ 持有 session 从 242 降至 56，终值和两项风险指标均改善；V1/V2 的
+  `DIFFUSING` 簇分别为 97/40 个，VXZ 相对 SGOV 的簇均值分别为 -0.8817%/+0.0846%；
+- combined 虽相对 V1 分类为 `POSITIVE`，V2 绝对终值仍低于初始资金，且路径相关总成本
+  $2,204.41 高于 V1 的 $1,994.27；不得把相对改善写成独立盈利能力；
+- 最差 20 个 SVXY 日中，V1/V2 short 都有 19 日持有 SGOV、1 日持有 SVXY；探针没有证明
+  完整尾部规避。
+
+HTML 严格由同一账本和 `report.json` 生成。浏览器视觉验收确认七个合同图表均实际渲染、时间轴
+包含 V1/V2 position 与 persistence 两层、控制台零错误；没有另建 renderer 或发布框架。
+
+独立分类为 short=`MIXED`、long=`POSITIVE`、combined=`POSITIVE`，所以冻结综合结论是
+`NO_COMPREHENSIVE_INCREMENT`。此外，概率模型层的 broad 事件仍为
+`INSUFFICIENT_EVIDENCE`，carry 事件仍未通过 Brier/ECE 门；二者只能诚实发布
+`BASE_RATE_ONLY`，不是预测增量。固定探针是价格盲设计完成后的历史外部验证，不是真实前瞻
+绩效、生产验收、资产配置建议或交易许可。
+
+阶段 E scope 复核：只新增合同允许的一个最终经济探针模块及其一份聚焦测试，并扩展既有 CLI；
+该提交为 1,144 个 Python additions，累计为 4,238 additions / 455 deletions，新增跟踪文件从
+3 增至 5，仍低于 8。输出生成、图表和价格批次都被封装在同一最终模块中，没有新增策略、
+normalization layer、renderer、publication、governance、plugin 或 generic validation package。
+
+最终裁决：`NOT_READY / NO_PROMOTION`。由于 short 探针不是 `POSITIVE`，且概率模型仍有未通过
+能力，本分支不得合并到 `main` 或推送；后续若继续，只能从现有逐日归因判断是否有新的气象事实
+缺陷并另立 defect_id，不能调整资产、仓位、阈值、成本或滞后后重跑本轮结果。

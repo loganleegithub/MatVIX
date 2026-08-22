@@ -84,6 +84,23 @@ ledger, machine summary and Markdown report under
 `outputs/v2_station_acceptance/` without reading product prices or calculating
 an aggregate score.
 
+Only after the four frozen weather-station entry dimensions pass, the one
+authorized economic probe can be executed with:
+
+```bash
+.venv/bin/python -m matvix run-v2-economic-probe --project-dir .
+```
+
+It applies the same frozen adapter, t+1 adjusted-open execution and 5bp
+one-way cost to V1/V2 short, long and combined SVXY/SGOV/VXZ probes.  The exact
+Yahoo Chart API responses and manifest remain local under
+`data/raw/economic_probe/`; the auditable ledger, JSON verdict and seven-chart
+HTML report are written under `outputs/v2_economic_probe/`.  These are fixed
+historical research probes, not strategy optimization, production performance
+or trading permission.  The recorded V2 result is short `MIXED`, long
+`POSITIVE`, combined `POSITIVE`, so the comprehensive verdict is
+`NO_COMPREHENSIVE_INCREMENT`.
+
 The probability cache is accepted only when its version, runtime, spec and
 state-history digest all match.
 
