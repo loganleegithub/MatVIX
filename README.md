@@ -7,9 +7,9 @@ monthly VX curve, VVIX, SKEW and SPX into:
 - five transparent state axes: Carry Risk, Shock, Tail Price, Persistence and
   Repair;
 - one deterministic market phase and a trader-readable evidence narrative;
-- five event-specific 5/10-session probability questions with explicit
-  eligibility, historical base rate, walk-forward OOF model status and
-  calibration evidence.
+- a versioned catalogue of event-specific 5/10-session probability questions
+  with explicit eligibility, historical base rate, walk-forward OOF model
+  status and calibration evidence.
 
 It is a market weather station, not a price oracle and not a trading-order
 generator.
@@ -26,14 +26,15 @@ python3.12 -m venv .venv
 .venv/bin/python -m pytest
 ```
 
-Probability version `2.0.0` starts the regularized Logistic OOF after 252
-completed event-specific samples, while retaining the 30/30 class minimum,
-20-session purge and the separate 252-sample calibrated publication gate.
-This makes all five real-data events testable; it does not make an
-underperforming model publishable.
+Probability version `3.0.0` starts the regularized Logistic OOF after 252
+completed event-specific samples, while retaining the 30/30 class minimum and
+20-session purge. Publication uses one causal 252-row rolling intercept with
+fixed slope 1 and a 20/20 calibration class gate. Broad 10-day persistence is
+the explicit `BASE_RATE_ONLY` reference exception and never trains a model.
+An underperforming required conditional model still fails station acceptance.
 
 `scikit-learn==1.7.2` is part of the probability contract.  A different
-runtime may calculate research outputs but cannot publish a formal calibrated
+runtime may calculate research outputs but cannot publish a formal conditional
 probability under the same probability version.
 
 ## Real-data rebuild
@@ -62,7 +63,6 @@ Then rebuild the normalized revision ledgers and state history:
   --date 2026-08-18 --full-rebuild --project-dir .
 .venv/bin/python -m matvix accept-real \
   --date 2026-08-18 --project-dir .
-.venv/bin/python -m matvix accept-v2-station --project-dir .
 .venv/bin/python -m matvix export-dashboard \
   --snapshot outputs/daily/2026-08-18.json \
   --output outputs/dashboard.html --project-dir .
@@ -73,25 +73,22 @@ Four missing SKEW observations and invalid CFE `Settle=0` values are preserved
 as missing; the pipeline does not forward-fill them.
 
 `accept-real` recomputes 13 business gates from the persisted raw ledgers,
-state history, event targets, truly out-of-fold predictions, sequential Platt
-calibration and the daily publication.  A model that fails Brier/ECE is an
-honest accepted result only when the published event falls back to
-`BASE_RATE_ONLY`.
+state history, event targets, truly out-of-fold predictions, sequential rolling
+intercept calibration and the daily publication. A required conditional model
+that fails Brier/ECE remains a station failure even when its daily publication
+honestly falls back to `BASE_RATE_ONLY`; only Broad is exempt from the model gate.
 
-`accept-v2-station` runs the weather-only V2 DATA, TENOR, STATE/TIMING,
-PROBABILITY INTEGRITY and PROBABILITY MODEL dimensions.  It writes the daily
-ledger, machine summary and Markdown report under
-`outputs/v2_station_acceptance/` without reading product prices or calculating
-an aggregate score.
+The Stage-D V3 station command remains unavailable until every Stage-C defect
+has its own frozen implementation result. `accept-real` is weather-only and
+does not read product prices.
 
-Only after the four frozen weather-station entry dimensions pass, the one
-authorized economic probe can be executed with:
+The historical V2 economic probe command remains frozen for reproducibility:
 
 ```bash
 .venv/bin/python -m matvix run-v2-economic-probe --project-dir .
 ```
 
-It applies the same frozen adapter, t+1 adjusted-open execution and 5bp
+It is not a V3 entry path. The V2 probe applies its frozen adapter, t+1 adjusted-open execution and 5bp
 one-way cost to V1/V2 short, long and combined SVXY/SGOV/VXZ probes.  The exact
 Yahoo Chart API responses and manifest remain local under
 `data/raw/economic_probe/`; the auditable ledger, JSON verdict and seven-chart

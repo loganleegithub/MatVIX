@@ -58,12 +58,10 @@ from matvix.scheduler import (
     write_launchd_plist,
 )
 from matvix.storage import read_json, read_parquet, write_parquet
-from matvix.v2_audit import run_v2_business_audit
-from matvix.v3_audit import run_v3_business_audit
 
 app = typer.Typer(
     name="matvix",
-    help="MatVIX v2: PIT VIX market narrative and calibrated transition probabilities.",
+    help="MatVIX v3 research: PIT VIX narrative and causal transition probabilities.",
     no_args_is_help=True,
 )
 
@@ -117,23 +115,6 @@ def doctor(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
         typer.echo(f"{'FOUND' if path.exists() else 'MISSING':7} {name}: {path}")
     if any(status == "FAIL" for *_, status in rows):
         raise typer.Exit(code=2)
-
-
-@app.command("audit-v2")
-def audit_v2(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
-    """Run the frozen V1, weather-only Phase-A business audit."""
-    outputs = run_v2_business_audit(project_dir)
-    typer.echo(f"Wrote {outputs['daily']}")
-    typer.echo(f"Wrote {outputs['summary']}")
-
-
-@app.command("audit-v3")
-def audit_v3(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
-    """Run the frozen V2, weather-only V3 Stage-A business audit."""
-
-    outputs = run_v3_business_audit(project_dir)
-    typer.echo(f"Wrote {outputs['daily']}")
-    typer.echo(f"Wrote {outputs['summary']}")
 
 
 @app.command("accept-v2-station")
@@ -329,7 +310,7 @@ def build_snapshot(
     allow_nonformal_runtime: Annotated[
         bool,
         typer.Option(
-            help="Research only: permit non-1.7.2 sklearn for calibrated probability attempts."
+            help="Research only: permit non-1.7.2 sklearn for probability attempts."
         ),
     ] = False,
 ) -> None:

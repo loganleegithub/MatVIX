@@ -49,9 +49,9 @@ def test_checked_in_release_config_is_bound_to_runtime_semantics() -> None:
 
     assert report.versions == {
         "source_manifest.yaml": "1.0.0",
-        "features_v2.yaml": "2.0.0",
-        "state_v2.yaml": "2.0.0",
-        "probability_v2.yaml": "2.0.0",
+        "features_v2.yaml": "3.0.0",
+        "state_v2.yaml": "3.0.0",
+        "probability_v2.yaml": "3.0.0",
     }
     assert report.config_bundle_digest.startswith("sha256:")
 
@@ -119,7 +119,7 @@ def test_project_root_runs_release_validation(
     root = _copy_release_configs(tmp_path)
     feature_path = root / "configs" / "features_v2.yaml"
     feature_path.write_text(
-        feature_path.read_text(encoding="utf-8").replace('version: "2.0.0"', 'version: "9.0.0"', 1),
+        feature_path.read_text(encoding="utf-8").replace('version: "3.0.0"', 'version: "9.0.0"', 1),
         encoding="utf-8",
     )
     monkeypatch.setenv("MATVIX_PROJECT_DIR", str(root))

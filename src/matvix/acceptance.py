@@ -10,14 +10,16 @@ import pandas as pd
 
 from matvix.calendar import add_sessions, decision_as_of
 from matvix.constants import (
+    BASE_RATE_ONLY_EVENTS,
     EVENT_HORIZONS,
     EVENT_ORDER,
+    FEATURE_CONDITIONAL_EVENTS,
     LOGISTIC_FEATURES,
 )
 from matvix.features.futures_curve import VXCM30_METHODOLOGY, VXCM30_TARGET_DAYS
 from matvix.output import validate_daily_output
 from matvix.probability.baseline import beta_smoothed_base_rate
-from matvix.probability.calibration import acceptance_metrics, apply_platt
+from matvix.probability.calibration import acceptance_metrics, apply_intercept, fit_intercept
 from matvix.probability.engine import outlook_answer, probability_for_event
 from matvix.probability.targets import add_event_statuses
 from matvix.probability.walk_forward import ProbabilitySpec, runtime_contract_status
@@ -104,8 +106,8 @@ OOF_COLUMNS = {
     "outcome_available_at",
     "label",
     "label_status",
-    "decision_score",
-    "base_probability",
+    "raw_probability",
+    "published_probability",
     "base_rate_at_prediction",
     "base_rate_samples",
     "base_rate_positive",
@@ -116,11 +118,11 @@ OOF_COLUMNS = {
     "training_latest_prediction_date",
     "training_latest_outcome_available_at",
     "converged",
-    "calibrated_probability",
-    "platt_a",
-    "platt_b",
+    "calibration_method",
     "calibration_samples",
-    "calibration_converged",
+    "calibration_positive",
+    "calibration_negative",
+    "intercept_b",
 }
 
 STATION_DIMENSIONS = (
@@ -645,27 +647,38 @@ def _audit_oof_training_boundaries(
             sample = training.dropna(subset=[*features, "label"]).tail(spec.training_max)
             positives = int(sample["label"].sum())
             negatives = len(sample) - positives
-            if not (
-                _integer_equals(row.training_samples, len(sample))
-                and _integer_equals(row.training_positive, positives)
-                and _integer_equals(row.training_negative, negatives)
-                and len(sample) >= spec.training_min
-                and positives >= spec.training_min_positive
-                and negatives >= spec.training_min_negative
-                and _is_true(row.converged)
-            ):
-                violations.append(f"{prefix}: training cohort metadata mismatch")
+            if event in BASE_RATE_ONLY_EVENTS:
+                if not (
+                    _integer_equals(row.training_samples, 0)
+                    and _integer_equals(row.training_positive, 0)
+                    and _integer_equals(row.training_negative, 0)
+                    and not _is_true(row.converged)
+                    and pd.isna(row.training_latest_prediction_date)
+                    and pd.isna(row.training_latest_outcome_available_at)
+                ):
+                    violations.append(f"{prefix}: base-rate exemption trained a model")
+            else:
+                if not (
+                    _integer_equals(row.training_samples, len(sample))
+                    and _integer_equals(row.training_positive, positives)
+                    and _integer_equals(row.training_negative, negatives)
+                    and len(sample) >= spec.training_min
+                    and positives >= spec.training_min_positive
+                    and negatives >= spec.training_min_negative
+                    and _is_true(row.converged)
+                ):
+                    violations.append(f"{prefix}: training cohort metadata mismatch")
 
-            expected_latest_date = training["prediction_date"].max()
-            expected_latest_outcome = training["outcome_available_at"].max()
-            if not (
-                pd.Timestamp(row.training_latest_prediction_date).normalize()
-                == pd.Timestamp(expected_latest_date).normalize()
-                and _same_timestamp(
-                    row.training_latest_outcome_available_at, expected_latest_outcome
-                )
-            ):
-                violations.append(f"{prefix}: persisted training boundary mismatch")
+                expected_latest_date = training["prediction_date"].max()
+                expected_latest_outcome = training["outcome_available_at"].max()
+                if not (
+                    pd.Timestamp(row.training_latest_prediction_date).normalize()
+                    == pd.Timestamp(expected_latest_date).normalize()
+                    and _same_timestamp(
+                        row.training_latest_outcome_available_at, expected_latest_outcome
+                    )
+                ):
+                    violations.append(f"{prefix}: persisted training boundary mismatch")
 
             rate, count, base_positive, base_negative = beta_smoothed_base_rate(
                 completed["label"],
@@ -679,10 +692,12 @@ def _audit_oof_training_boundaries(
                 and _same_number(row.base_rate_at_prediction, rate)
             ):
                 violations.append(f"{prefix}: rolling BaseRate metadata mismatch")
-            if not (
-                _is_finite_number(row.decision_score)
-                and _is_finite_number(row.base_probability)
-                and 0.0 < float(row.base_probability) < 1.0
+            if event in BASE_RATE_ONLY_EVENTS:
+                if pd.notna(row.raw_probability):
+                    violations.append(f"{prefix}: base-rate exemption has raw probability")
+            elif not (
+                _is_finite_number(row.raw_probability)
+                and 0.0 < float(row.raw_probability) < 1.0
             ):
                 violations.append(f"{prefix}: raw logistic output invalid")
 
@@ -708,24 +723,34 @@ def _audit_oof_training_boundaries(
     )
 
 
-def _platt_row_is_arithmetically_valid(row: pd.Series) -> bool:
-    if not _is_true(row.get("calibration_converged")):
-        return bool(pd.isna(row.get("calibrated_probability")))
+def _calibration_row_is_arithmetically_valid(row: pd.Series) -> bool:
+    method = row.get("calibration_method")
+    if method == "NOT_APPLICABLE":
+        return bool(
+            pd.isna(row.get("raw_probability"))
+            and pd.isna(row.get("intercept_b"))
+            and _same_number(row.get("published_probability"), row.get("base_rate_at_prediction"))
+        )
+    if method == "IDENTITY_WARMUP":
+        return bool(
+            _is_finite_number(row.get("raw_probability"))
+            and pd.isna(row.get("intercept_b"))
+            and _same_number(row.get("published_probability"), row.get("raw_probability"))
+        )
+    if method != "ROLLING_INTERCEPT_252":
+        return False
     values = (
-        row.get("decision_score"),
-        row.get("platt_a"),
-        row.get("platt_b"),
-        row.get("calibrated_probability"),
+        row.get("raw_probability"),
+        row.get("intercept_b"),
+        row.get("published_probability"),
     )
     if not all(_is_finite_number(value) for value in values):
         return False
-    expected = apply_platt(
-        float(row["decision_score"]), float(row["platt_a"]), float(row["platt_b"])
-    )
-    return _same_number(row["calibrated_probability"], expected)
+    expected = apply_intercept(float(row["raw_probability"]), float(row["intercept_b"]))
+    return _same_number(row["published_probability"], expected)
 
 
-def _completed_calibrated_validation(
+def _completed_published_validation(
     oof: pd.DataFrame, event: str, snapshot_session: pd.Timestamp
 ) -> tuple[bool, dict[str, Any]]:
     if oof.empty:
@@ -734,7 +759,7 @@ def _completed_calibrated_validation(
     cutoff = pd.Timestamp(decision_as_of(snapshot_session)).tz_convert("UTC")
     completed = frame.loc[
         frame["label_status"].isin(["OBSERVED_0", "OBSERVED_1"])
-        & frame["calibrated_probability"].notna()
+        & frame["published_probability"].notna()
         & frame["base_rate_at_prediction"].notna()
         & pd.to_datetime(frame["outcome_available_at"], utc=True, errors="coerce").le(cutoff)
         & pd.to_datetime(frame["prediction_date"], errors="coerce").lt(snapshot_session)
@@ -746,7 +771,7 @@ def _completed_calibrated_validation(
         and int(metrics.get("negatives", 0)) >= 20
         and {"brier_model", "brier_base", "brier_skill", "ece"}.issubset(metrics)
     )
-    return complete, {**metrics, "completed_calibrated_available": len(completed)}
+    return complete, {**metrics, "completed_published_available": len(completed)}
 
 
 def _calibration_integrity_passes(
@@ -758,8 +783,12 @@ def _calibration_integrity_passes(
         not violations
         and set(event_evidence) == set(EVENT_ORDER)
         and all(
-            evidence["raw_oof"] > 0 and evidence["calibrated_oof"] > 0
-            for evidence in event_evidence.values()
+            (
+                evidence["base_rate_reference_oof"] > 0
+                if event in BASE_RATE_ONLY_EVENTS
+                else evidence["raw_oof"] > 0 and evidence["published_oof"] > 0
+            )
+            for event, evidence in event_evidence.items()
         )
     )
 
@@ -773,9 +802,20 @@ def _audit_sequential_calibration(
     event_evidence: dict[str, Any] = {}
     for event in EVENT_ORDER:
         event_oof = oof.loc[oof["event_id"].eq(event)].sort_values("prediction_date")
-        calibrated_total = int(event_oof["calibrated_probability"].notna().sum())
+        published_total = int(event_oof["published_probability"].notna().sum())
         for index, (_, row) in enumerate(event_oof.iterrows()):
             prediction_date = pd.Timestamp(row["prediction_date"]).normalize()
+            prefix = f"{event}@{prediction_date.date()}"
+            if event in BASE_RATE_ONLY_EVENTS:
+                if not (
+                    row["calibration_method"] == "NOT_APPLICABLE"
+                    and _integer_equals(row["calibration_samples"], 0)
+                    and _integer_equals(row["calibration_positive"], 0)
+                    and _integer_equals(row["calibration_negative"], 0)
+                    and _calibration_row_is_arithmetically_valid(row)
+                ):
+                    violations.append(f"{prefix}: base-rate exemption calibration metadata invalid")
+                continue
             as_of = pd.Timestamp(decision_as_of(prediction_date)).tz_convert("UTC")
             prior = event_oof.iloc[:index]
             prior = prior.loc[
@@ -789,31 +829,49 @@ def _audit_sequential_calibration(
                 and positives >= spec.calibration_min_positive
                 and negatives >= spec.calibration_min_negative
             )
-            prefix = f"{event}@{prediction_date.date()}"
-            converged_is_boolean = isinstance(row["calibration_converged"], (bool, np.bool_))
-            if not converged_is_boolean:
-                violations.append(f"{prefix}: calibration convergence flag is not boolean")
-            if not _integer_equals(row["calibration_samples"], len(prior)):
-                violations.append(f"{prefix}: calibration_samples is not prior-only cohort")
-            if not ready and (
-                _is_true(row["calibration_converged"])
-                or pd.notna(row["calibrated_probability"])
-                or pd.notna(row["platt_a"])
-                or pd.notna(row["platt_b"])
+            if not (
+                _integer_equals(row["calibration_samples"], len(prior))
+                and _integer_equals(row["calibration_positive"], positives)
+                and _integer_equals(row["calibration_negative"], negatives)
             ):
-                violations.append(f"{prefix}: Platt published before class minimum")
-            if ready and not _platt_row_is_arithmetically_valid(row):
-                violations.append(f"{prefix}: calibrated probability disagrees with Platt")
+                violations.append(f"{prefix}: calibration cohort metadata mismatch")
+            if not ready and not (
+                row["calibration_method"] == "IDENTITY_WARMUP"
+                and _calibration_row_is_arithmetically_valid(row)
+            ):
+                violations.append(f"{prefix}: non-causal warmup publication")
+            if ready:
+                expected_intercept = fit_intercept(
+                    prior["raw_probability"].to_numpy(), prior["label"].to_numpy()
+                )
+                if not (
+                    row["calibration_method"] == "ROLLING_INTERCEPT_252"
+                    and _same_number(row["intercept_b"], expected_intercept)
+                    and _calibration_row_is_arithmetically_valid(row)
+                ):
+                    violations.append(f"{prefix}: rolling intercept replay mismatch")
 
-        validation_complete, validation = _completed_calibrated_validation(
-            event_oof, event, snapshot_session
-        )
-        event_evidence[event] = {
-            "raw_oof": len(event_oof),
-            "calibrated_oof": calibrated_total,
-            "validation_complete": validation_complete,
-            "validation": validation,
-        }
+        if event in BASE_RATE_ONLY_EVENTS:
+            event_evidence[event] = {
+                "publication_policy": "BASE_RATE_ONLY_EXEMPT",
+                "raw_oof": 0,
+                "published_oof": published_total,
+                "base_rate_reference_oof": published_total,
+                "validation_complete": True,
+                "validation": {"accepted": True, "exempt": True, "samples": published_total},
+            }
+        else:
+            validation_complete, validation = _completed_published_validation(
+                event_oof, event, snapshot_session
+            )
+            event_evidence[event] = {
+                "publication_policy": "FEATURE_CONDITIONAL_REQUIRED",
+                "raw_oof": int(event_oof["raw_probability"].notna().sum()),
+                "published_oof": published_total,
+                "base_rate_reference_oof": 0,
+                "validation_complete": validation_complete,
+                "validation": validation,
+            }
     return _calibration_integrity_passes(event_evidence, violations), {
         "events": event_evidence,
         "violations": len(violations),
@@ -823,14 +881,20 @@ def _audit_sequential_calibration(
 
 def _events_equal(actual: dict[str, Any], expected: dict[str, Any]) -> tuple[bool, list[str]]:
     differences: list[str] = []
-    numeric = {"probability", "base_rate", "uplift"}
+    numeric = {"raw_probability", "probability", "base_rate", "uplift", "intercept_b"}
     for field in {
         "event_status",
         "model_status",
         "probability_kind",
+        "raw_probability",
         "probability",
         "base_rate",
         "uplift",
+        "calibration_method",
+        "calibration_samples",
+        "calibration_positive",
+        "calibration_negative",
+        "intercept_b",
         "valid_through_session",
         "interpretation",
     }:
@@ -1054,7 +1118,7 @@ def build_real_acceptance_report(
             )
             cohort_evidence[event] = evidence
             cohort_passed &= bool(evidence["base_rate_ready"])
-    gates.append(_gate("five_event_target_cohorts", cohort_passed, events=cohort_evidence))
+    gates.append(_gate("v3_event_target_cohorts", cohort_passed, events=cohort_evidence))
 
     oof_passed = False
     normalized_oof = oof.copy()
@@ -1081,7 +1145,7 @@ def build_real_acceptance_report(
         calibration_evidence = {"error": "OOF boundary gate failed"}
     gates.append(
         _gate(
-            "five_event_oof_calibration_integrity",
+            "v3_oof_calibration_integrity",
             calibration_passed,
             **calibration_evidence,
         )
@@ -1104,7 +1168,7 @@ def build_real_acceptance_report(
     gates.append(_gate("probability_publication_truth", publication_passed, **publication_evidence))
 
     return {
-        "acceptance_version": "2.0.0",
+        "acceptance_version": "3.0.0",
         "passed": all(gate["passed"] for gate in gates),
         "session_date": snapshot.get("session_date"),
         "data_range": {
@@ -1201,13 +1265,16 @@ def _station_probability_model_assessment(
         evidence = events.get(event, {})
         validation = evidence.get("validation", {})
         validation = validation if isinstance(validation, dict) else {}
-        if not bool(evidence.get("validation_complete")):
+        if event in BASE_RATE_ONLY_EVENTS:
+            status = "BASE_RATE_ONLY_EXEMPT"
+        elif not bool(evidence.get("validation_complete")):
             status = "INSUFFICIENT_EVIDENCE"
         elif bool(validation.get("accepted")):
             status = "PASS"
         else:
             status = "FAIL"
-        statuses.append(status)
+        if event in FEATURE_CONDITIONAL_EVENTS:
+            statuses.append(status)
         results[event] = {"status": status, **validation}
     overall = (
         "FAIL"
@@ -1216,7 +1283,11 @@ def _station_probability_model_assessment(
         if "INSUFFICIENT_EVIDENCE" in statuses
         else "PASS"
     )
-    return overall, {"events": results}
+    return overall, {
+        "events": results,
+        "conditional_model_events": list(FEATURE_CONDITIONAL_EVENTS),
+        "base_rate_only_events": list(BASE_RATE_ONLY_EVENTS),
+    }
 
 
 def _station_tenor_stage_masks(states: pd.DataFrame) -> dict[str, pd.Series]:
@@ -1587,9 +1658,9 @@ def build_v2_station_acceptance(
 
     integrity_gate_names = (
         "target_ledger_truth",
-        "five_event_target_cohorts",
+        "v3_event_target_cohorts",
         "oof_training_boundaries",
-        "five_event_oof_calibration_integrity",
+        "v3_oof_calibration_integrity",
         "probability_publication_truth",
     )
     integrity_checks = {
@@ -1600,7 +1671,7 @@ def build_v2_station_acceptance(
     ) == set(EVENT_ORDER)
     probability_integrity_passed = all(integrity_checks.values()) and event_set_truth
     calibration_evidence = cast(
-        dict[str, Any], real_gates.get("five_event_oof_calibration_integrity", {}).get("evidence", {})
+        dict[str, Any], real_gates.get("v3_oof_calibration_integrity", {}).get("evidence", {})
     )
     calibration_events = cast(dict[str, dict[str, Any]], calibration_evidence.get("events", {}))
     probability_model_status, probability_model_evidence = (
@@ -1630,7 +1701,11 @@ def build_v2_station_acceptance(
             dict[str, Any], probability_model_evidence["events"][event]
         )
         expected_model = (
-            "CALIBRATED_MODEL" if model_evidence["status"] == "PASS" else "BASE_RATE_ONLY"
+            "BASE_RATE_ONLY"
+            if event in BASE_RATE_ONLY_EVENTS
+            else "CALIBRATED_MODEL"
+            if model_evidence["status"] == "PASS"
+            else "BASE_RATE_ONLY"
         )
         matches = publication["model_status"] == expected_model
         fallback_truth &= matches
@@ -1733,7 +1808,7 @@ def build_v2_station_acceptance(
     key_dimensions = STATION_DIMENSIONS[:4]
     entry_passed = all(dimensions[name]["status"] == "PASS" for name in key_dimensions)
     summary = {
-        "acceptance_version": "2.0.0",
+        "acceptance_version": "3.0.0",
         "evidence_boundary": {
             "weather_station_only": True,
             "product_prices_read": False,

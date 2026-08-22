@@ -2,49 +2,47 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
-from scipy.special import expit
+from scipy.optimize import brentq
+from scipy.special import expit, logit
+
+CALIBRATION_CLIP_MIN = 1e-6
+CALIBRATION_CLIP_MAX = 1.0 - 1e-6
+INTERCEPT_SLOPE = 1.0
+INTERCEPT_ROOT_LOWER = -40.0
+INTERCEPT_ROOT_UPPER = 40.0
 
 
 def binary_log_loss(y: np.ndarray, p: np.ndarray) -> float:
-    clipped = np.clip(p, 1e-6, 1 - 1e-6)
+    clipped = np.clip(p, CALIBRATION_CLIP_MIN, CALIBRATION_CLIP_MAX)
     return float(-np.mean(y * np.log(clipped) + (1 - y) * np.log(1 - clipped)))
 
 
-def fit_platt(
-    decision_scores: np.ndarray,
-    labels: np.ndarray,
-    *,
-    regularization: float = 1e-6,
-) -> tuple[float, float, bool]:
-    z = np.asarray(decision_scores, dtype=float)
-    y = np.asarray(labels, dtype=float)
-
-    def objective(params: np.ndarray) -> tuple[float, np.ndarray]:
-        a, b = params
-        logits = a * z + b
-        probabilities = expit(logits)
-        # Stable, unclipped Bernoulli negative log-likelihood.  Clipping is only
-        # applied to the published probability, exactly as the v1 contract states.
-        loss = float(np.mean(np.logaddexp(0.0, logits) - y * logits)) + regularization * (
-            a * a + b * b
-        )
-        gradient_a = float(np.mean((probabilities - y) * z) + 2 * regularization * a)
-        gradient_b = float(np.mean(probabilities - y) + 2 * regularization * b)
-        return loss, np.asarray([gradient_a, gradient_b])
-
-    result = minimize(
-        lambda params: objective(params)[0],
-        x0=np.asarray([1.0, 0.0]),
-        jac=lambda params: objective(params)[1],
-        method="L-BFGS-B",
-        options={"maxiter": 1000, "ftol": 1e-12, "gtol": 1e-8},
+def fit_intercept(raw_probabilities: np.ndarray, labels: np.ndarray) -> float:
+    probabilities = np.clip(
+        np.asarray(raw_probabilities, dtype=float),
+        CALIBRATION_CLIP_MIN,
+        CALIBRATION_CLIP_MAX,
     )
-    return float(result.x[0]), float(result.x[1]), bool(result.success)
+    y = np.asarray(labels, dtype=float)
+    if probabilities.ndim != 1 or y.ndim != 1 or len(probabilities) != len(y) or not len(y):
+        raise ValueError("Rolling intercept requires equal non-empty one-dimensional inputs")
+    z = logit(probabilities)
+
+    def score(intercept: float) -> float:
+        return float(np.mean(expit(z + intercept)) - np.mean(y))
+
+    return float(brentq(score, INTERCEPT_ROOT_LOWER, INTERCEPT_ROOT_UPPER))
 
 
-def apply_platt(decision_score: float, a: float, b: float) -> float:
-    return float(np.clip(expit(a * decision_score + b), 1e-6, 1 - 1e-6))
+def apply_intercept(raw_probability: float, intercept: float) -> float:
+    raw = float(np.clip(raw_probability, CALIBRATION_CLIP_MIN, CALIBRATION_CLIP_MAX))
+    return float(
+        np.clip(
+            expit(INTERCEPT_SLOPE * logit(raw) + intercept),
+            CALIBRATION_CLIP_MIN,
+            CALIBRATION_CLIP_MAX,
+        )
+    )
 
 
 def brier_score(labels: np.ndarray, probabilities: np.ndarray) -> float:
@@ -80,8 +78,8 @@ def exact_ece_252(
     return float(ece)
 
 
-def acceptance_metrics(completed_calibrated: pd.DataFrame) -> dict[str, float | bool | int]:
-    frame = completed_calibrated.sort_values("prediction_date").tail(252)
+def acceptance_metrics(completed_published: pd.DataFrame) -> dict[str, float | bool | int]:
+    frame = completed_published.sort_values("prediction_date").tail(252)
     if len(frame) < 252:
         return {"accepted": False, "samples": len(frame)}
     positives = int(frame["label"].sum())
@@ -93,12 +91,12 @@ def acceptance_metrics(completed_calibrated: pd.DataFrame) -> dict[str, float | 
             "positives": positives,
             "negatives": negatives,
         }
-    model_brier = brier_score(frame["label"], frame["calibrated_probability"])
+    model_brier = brier_score(frame["label"], frame["published_probability"])
     base_brier = brier_score(frame["label"], frame["base_rate_at_prediction"])
     skill = 1.0 - model_brier / base_brier if base_brier > 0 else float("-inf")
     ece = exact_ece_252(
         frame["label"].to_numpy(),
-        frame["calibrated_probability"].to_numpy(),
+        frame["published_probability"].to_numpy(),
         frame["prediction_date"].to_numpy(),
     )
     return {

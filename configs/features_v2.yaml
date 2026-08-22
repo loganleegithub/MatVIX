@@ -1,5 +1,5 @@
-version: "2.0.0"
-model_id: MATVIX_CBOE_CORE_V2
+version: "3.0.0"
+model_id: MATVIX_CBOE_CORE_V3
 percentile:
   reference_sessions: 756
   minimum_valid: 504

@@ -11,12 +11,13 @@ import pandas as pd
 
 from matvix.calendar import add_sessions, decision_as_of
 from matvix.constants import (
+    BASE_RATE_ONLY_EVENTS,
     EVENT_HORIZONS,
     EVENT_ORDER,
     LOGISTIC_FEATURES,
     PROBABILITY_VERSION,
 )
-from matvix.probability.calibration import apply_platt, fit_platt
+from matvix.probability.calibration import apply_intercept, fit_intercept
 from matvix.probability.targets import add_event_statuses, build_target_ledger
 from matvix.probability.walk_forward import (
     ProbabilitySpec,
@@ -27,7 +28,7 @@ from matvix.probability.walk_forward import (
     validation_as_of,
 )
 
-PROBABILITY_ARTIFACT_CONTRACT_VERSION = "1"
+PROBABILITY_ARTIFACT_CONTRACT_VERSION = "2"
 
 # Only fields that can alter event eligibility, outcome labels, model inputs or
 # their chronological order belong in the probability history fingerprint.
@@ -66,9 +67,15 @@ def _empty_event(
         "event_status": event_status,
         "model_status": model_status,
         "probability_kind": None,
+        "raw_probability": None,
         "probability": None,
         "base_rate": None,
         "uplift": None,
+        "calibration_method": None,
+        "calibration_samples": None,
+        "calibration_positive": None,
+        "calibration_negative": None,
+        "intercept_b": None,
         "valid_through_session": None,
         "interpretation": interpretation,
     }
@@ -79,15 +86,32 @@ def _base_rate_event(base_rate: float, valid_through: str) -> dict[str, Any]:
         "event_status": "ELIGIBLE",
         "model_status": "BASE_RATE_ONLY",
         "probability_kind": "HISTORICAL_REFERENCE",
+        "raw_probability": None,
         "probability": float(base_rate),
         "base_rate": float(base_rate),
         "uplift": 0.0,
+        "calibration_method": "NOT_APPLICABLE",
+        "calibration_samples": 0,
+        "calibration_positive": 0,
+        "calibration_negative": 0,
+        "intercept_b": None,
         "valid_through_session": valid_through,
         "interpretation": "当前只使用同类历史发生率，特征模型未提供增量判断",
     }
 
 
-def _conditional_event(probability: float, base_rate: float, valid_through: str) -> dict[str, Any]:
+def _conditional_event(
+    raw_probability: float,
+    probability: float,
+    base_rate: float,
+    valid_through: str,
+    *,
+    calibration_samples: int,
+    calibration_positive: int,
+    calibration_negative: int,
+    intercept_b: float | None,
+    warmup: bool = False,
+) -> dict[str, Any]:
     uplift = float(probability - base_rate)
     if uplift >= 0.10:
         comparison = "明显高于历史基准"
@@ -99,11 +123,17 @@ def _conditional_event(probability: float, base_rate: float, valid_through: str)
         comparison = "低于历史基准"
     return {
         "event_status": "ELIGIBLE",
-        "model_status": "CALIBRATED_MODEL",
+        "model_status": "IDENTITY_WARMUP" if warmup else "CALIBRATED_MODEL",
         "probability_kind": "FEATURE_CONDITIONAL",
+        "raw_probability": float(raw_probability),
         "probability": float(probability),
         "base_rate": float(base_rate),
         "uplift": uplift,
+        "calibration_method": "IDENTITY_WARMUP" if warmup else "ROLLING_INTERCEPT_252",
+        "calibration_samples": calibration_samples,
+        "calibration_positive": calibration_positive,
+        "calibration_negative": calibration_negative,
+        "intercept_b": intercept_b,
         "valid_through_session": valid_through,
         "interpretation": (
             f"当前 {probability:.1%}，同类历史基准 {base_rate:.1%}，"
@@ -172,6 +202,12 @@ def probability_for_event(
             pd.DataFrame() if oof is None else oof,
         )
 
+    if event in BASE_RATE_ONLY_EVENTS:
+        metadata["publication_policy"] = "BASE_RATE_ONLY_EXEMPT"
+        return _base_rate_event(base_rate, valid_through), metadata, (
+            pd.DataFrame() if oof is None else oof
+        )
+
     if oof is None:
         oof = build_oof_ledger(state_features, target_ledger, event, spec=spec)
     metadata["oof_rows"] = len(oof)
@@ -182,6 +218,11 @@ def probability_for_event(
     if model is None:
         metadata["fallback_reason"] = "logistic_unavailable_or_not_converged"
         return _base_rate_event(base_rate, valid_through), metadata, oof
+
+    features = LOGISTIC_FEATURES[event]
+    x = row[features].to_numpy(dtype=float).reshape(1, -1)
+    raw_probability = float(model.predict_proba(x)[0, 1])
+    metadata["raw_probability"] = raw_probability
 
     prediction_as_of = pd.Timestamp(decision_as_of(prediction_date)).tz_convert("UTC")
     calibration = (
@@ -206,15 +247,27 @@ def probability_for_event(
         or positives < spec.calibration_min_positive
         or negatives < spec.calibration_min_negative
     ):
-        metadata["fallback_reason"] = "platt_history_insufficient"
-        return _base_rate_event(base_rate, valid_through), metadata, oof
-    a, b, converged = fit_platt(
-        calibration["decision_score"].to_numpy(), calibration["label"].to_numpy()
+        metadata["publication_method"] = "IDENTITY_WARMUP"
+        return (
+            _conditional_event(
+                raw_probability,
+                raw_probability,
+                base_rate,
+                valid_through,
+                calibration_samples=len(calibration),
+                calibration_positive=positives,
+                calibration_negative=negatives,
+                intercept_b=None,
+                warmup=True,
+            ),
+            metadata,
+            oof,
+        )
+    intercept = fit_intercept(
+        calibration["raw_probability"].to_numpy(), calibration["label"].to_numpy()
     )
-    metadata.update({"platt_a": a, "platt_b": b, "platt_converged": converged})
-    if not converged:
-        metadata["fallback_reason"] = "platt_not_converged"
-        return _base_rate_event(base_rate, valid_through), metadata, oof
+    probability = apply_intercept(raw_probability, intercept)
+    metadata.update({"intercept_b": intercept, "publication_method": "ROLLING_INTERCEPT_252"})
 
     validation = validation_as_of(oof, prediction_date, spec)
     metadata["validation"] = validation
@@ -222,18 +275,21 @@ def probability_for_event(
         metadata["fallback_reason"] = "brier_or_ece_gate_not_met"
         return _base_rate_event(base_rate, valid_through), metadata, oof
 
-    features = LOGISTIC_FEATURES[event]
-    x = row[features].to_numpy(dtype=float).reshape(1, -1)
-    decision_score = float(model.decision_function(x)[0])
-    probability = apply_platt(decision_score, a, b)
-    metadata.update(
-        {
-            "decision_score": decision_score,
-            "base_logistic_probability": float(model.predict_proba(x)[0, 1]),
-            "calibrated_probability": probability,
-        }
+    metadata["published_probability"] = probability
+    return (
+        _conditional_event(
+            raw_probability,
+            probability,
+            base_rate,
+            valid_through,
+            calibration_samples=len(calibration),
+            calibration_positive=positives,
+            calibration_negative=negatives,
+            intercept_b=intercept,
+        ),
+        metadata,
+        oof,
     )
-    return _conditional_event(probability, base_rate, valid_through), metadata, oof
 
 
 def outlook_answer(data_status: str, events: dict[str, dict[str, Any]]) -> str:
@@ -244,14 +300,14 @@ def outlook_answer(data_status: str, events: dict[str, dict[str, Any]]) -> str:
         return "UNKNOWN"
     if all(status == "NOT_APPLICABLE" for status in statuses):
         return "NOT_APPLICABLE"
-    calibrated = [
+    conditional = [
         (event, events[event]["uplift"])
         for event in EVENT_ORDER
         if events[event]["event_status"] == "ELIGIBLE"
         and events[event]["model_status"] == "CALIBRATED_MODEL"
     ]
-    if calibrated:
-        event, uplift = max(calibrated, key=lambda item: (item[1], -EVENT_ORDER.index(item[0])))
+    if conditional:
+        event, uplift = max(conditional, key=lambda item: (item[1], -EVENT_ORDER.index(item[0])))
         return event if float(uplift) >= 0.10 else "NO_STRONG_EDGE"
     if any(
         events[event]["event_status"] == "ELIGIBLE"
@@ -269,7 +325,7 @@ def probability_availability_report(
 
     Dates are derived from the actual target and OOF ledgers, never inferred
     from a planned sample size. ``base_rate`` is available when the 252nd
-    completed eligible label's outcome is available; logistic and calibrated
+    completed eligible label's outcome is available; Logistic and rolling-intercept
     dates are the first sequential OOF rows actually produced.
     """
 
@@ -295,26 +351,31 @@ def probability_availability_report(
             event_oof = pd.DataFrame()
         else:
             event_oof = oof.loc[oof["event_id"].eq(event)].sort_values("prediction_date")
-        logistic_available = (
-            pd.Timestamp(event_oof.iloc[0]["prediction_date"]).date().isoformat()
-            if not event_oof.empty
-            else None
-        )
-        calibrated_rows = (
-            event_oof.loc[event_oof["calibrated_probability"].notna()]
-            if not event_oof.empty and "calibrated_probability" in event_oof
+        logistic_rows = (
+            event_oof.loc[event_oof["raw_probability"].notna()]
+            if not event_oof.empty and "raw_probability" in event_oof
             else pd.DataFrame()
         )
-        calibrated_available = (
-            pd.Timestamp(calibrated_rows.iloc[0]["prediction_date"]).date().isoformat()
-            if not calibrated_rows.empty
+        logistic_available = (
+            pd.Timestamp(logistic_rows.iloc[0]["prediction_date"]).date().isoformat()
+            if not logistic_rows.empty
+            else None
+        )
+        published_rows = (
+            event_oof.loc[event_oof["calibration_method"].eq("ROLLING_INTERCEPT_252")]
+            if not event_oof.empty and "calibration_method" in event_oof
+            else pd.DataFrame()
+        )
+        published_available = (
+            pd.Timestamp(published_rows.iloc[0]["prediction_date"]).date().isoformat()
+            if not published_rows.empty
             else None
         )
         report[event] = {
             "first_completed_label_prediction_date": first_label,
             "base_rate_available_date": base_rate_available,
             "first_logistic_oof_prediction_date": logistic_available,
-            "first_calibrated_oof_prediction_date": calibrated_available,
+            "first_rolling_intercept_oof_prediction_date": published_available,
             "completed_eligible_samples": int(len(completed)),
             "positive_samples": int(completed["label"].sum()) if not completed.empty else 0,
             "negative_samples": int(len(completed) - completed["label"].sum())
@@ -529,13 +590,13 @@ def validate_probability_artifact_contract(
         required_oof = {
             "event_id",
             "prediction_date",
-            "decision_score",
-            "base_probability",
-            "calibrated_probability",
-            "platt_a",
-            "platt_b",
+            "raw_probability",
+            "published_probability",
+            "calibration_method",
             "calibration_samples",
-            "calibration_converged",
+            "calibration_positive",
+            "calibration_negative",
+            "intercept_b",
             "label",
             "label_status",
             "outcome_available_at",
@@ -626,28 +687,30 @@ def resolve_probability_artifacts(
 
     targets = build_target_ledger(frame)
     runtime_ok = bool(runtime_contract_status()["compatible"])
-    if formal_runtime_required and not runtime_ok:
-        combined_oof = pd.DataFrame()
-    else:
-        new_dates = pd.DatetimeIndex(frame.iloc[prior_rows:]["session_date"])
-        ledgers: list[pd.DataFrame] = []
-        for event in EVENT_ORDER:
-            event_oof = (
-                cached_oof.loc[cached_oof["event_id"].eq(event)].copy()
-                if not cached_oof.empty and "event_id" in cached_oof
-                else pd.DataFrame()
-            )
-            ledger = extend_oof_ledger(
-                frame,
-                targets,
-                event,
-                event_oof,
-                new_dates,
-                spec=spec,
-            )
-            if not ledger.empty:
-                ledgers.append(ledger)
-        combined_oof = pd.concat(ledgers, ignore_index=True) if ledgers else pd.DataFrame()
+    events_to_build = (
+        BASE_RATE_ONLY_EVENTS
+        if formal_runtime_required and not runtime_ok
+        else EVENT_ORDER
+    )
+    new_dates = pd.DatetimeIndex(frame.iloc[prior_rows:]["session_date"])
+    ledgers: list[pd.DataFrame] = []
+    for event in events_to_build:
+        event_oof = (
+            cached_oof.loc[cached_oof["event_id"].eq(event)].copy()
+            if not cached_oof.empty and "event_id" in cached_oof
+            else pd.DataFrame()
+        )
+        ledger = extend_oof_ledger(
+            frame,
+            targets,
+            event,
+            event_oof,
+            new_dates,
+            spec=spec,
+        )
+        if not ledger.empty:
+            ledgers.append(ledger)
+    combined_oof = pd.concat(ledgers, ignore_index=True) if ledgers else pd.DataFrame()
 
     contract = build_probability_artifact_contract(
         frame,
@@ -678,9 +741,12 @@ def prepare_probability_artifacts(
     frame = _normalize_state_history(state_features)
     targets = build_target_ledger(frame)
     runtime_ok = bool(runtime_contract_status()["compatible"])
-    if formal_runtime_required and not runtime_ok:
-        return targets, pd.DataFrame()
-    ledgers = [build_oof_ledger(frame, targets, event, spec=spec) for event in EVENT_ORDER]
+    events_to_build = (
+        BASE_RATE_ONLY_EVENTS
+        if formal_runtime_required and not runtime_ok
+        else EVENT_ORDER
+    )
+    ledgers = [build_oof_ledger(frame, targets, event, spec=spec) for event in events_to_build]
     nonempty = [ledger for ledger in ledgers if not ledger.empty]
     combined = pd.concat(nonempty, ignore_index=True) if nonempty else pd.DataFrame()
     return targets, combined

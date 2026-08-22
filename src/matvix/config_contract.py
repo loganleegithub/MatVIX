@@ -33,18 +33,18 @@ _FROZEN = {
     ),
     "features_v2.yaml": (
         "version",
-        "2.0.0",
-        "f209980fcc7be6c31b5400e790d478b57c43e7fe9b47b1a5af8cd76927a0bd91",
+        "3.0.0",
+        "db0343322a652128ad033cb59f4cbf2bb25928881e7f68c2901b3b32cab917f3",
     ),
     "state_v2.yaml": (
         "version",
-        "2.0.0",
-        "04dc52355a41b0cf4ffdb061d04962714e159dbb82a7d80d9a7d5196342be766",
+        "3.0.0",
+        "bbe935e2b96fda7bc379e76592807a19d6ed57f820896c1a37281735c11c8482",
     ),
     "probability_v2.yaml": (
         "version",
-        "2.0.0",
-        "015a57d11a5868aaac78f875d275d2d86ed39770d154bfc73531217f3df9f535",
+        "3.0.0",
+        "fe199f2e42188acbbe528867da50fb411f78024e7a815eff2770282dd66cf400",
     ),
 }
 
@@ -256,9 +256,21 @@ def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
 
 
 def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
-    from matvix.constants import EVENT_ORDER, PROBABILITY_VERSION
+    from matvix.constants import (
+        BASE_RATE_ONLY_EVENTS,
+        EVENT_ORDER,
+        FEATURE_CONDITIONAL_EVENTS,
+        PROBABILITY_VERSION,
+    )
     from matvix.probability.baseline import beta_smoothed_base_rate
-    from matvix.probability.calibration import acceptance_metrics, apply_platt, fit_platt
+    from matvix.probability.calibration import (
+        CALIBRATION_CLIP_MAX,
+        CALIBRATION_CLIP_MIN,
+        INTERCEPT_ROOT_LOWER,
+        INTERCEPT_ROOT_UPPER,
+        INTERCEPT_SLOPE,
+        acceptance_metrics,
+    )
     from matvix.probability.walk_forward import (
         ProbabilitySpec,
         make_logistic,
@@ -267,8 +279,25 @@ def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
 
     _same(errors, "probability.version", PROBABILITY_VERSION, config["version"])
     _same(errors, "probability.event_order", list(EVENT_ORDER), config["event_order"])
+    expected_policy = {
+        event: (
+            "BASE_RATE_ONLY_EXEMPT"
+            if event in BASE_RATE_ONLY_EVENTS
+            else "FEATURE_CONDITIONAL_REQUIRED"
+        )
+        for event in EVENT_ORDER
+    }
+    _same(errors, "probability.event_policy", expected_policy, config["event_policy"])
+    _same(
+        errors,
+        "probability.feature_conditional_events",
+        tuple(event for event in EVENT_ORDER if event not in BASE_RATE_ONLY_EVENTS),
+        FEATURE_CONDITIONAL_EVENTS,
+    )
     spec = asdict(ProbabilitySpec())
-    base, logistic, platt = config["base_rate"], config["logistic"], config["platt"]
+    base = config["base_rate"]
+    logistic = config["logistic"]
+    rolling = config["rolling_intercept"]
     spec_bindings = {
         "base_rate_max": base["max_samples"],
         "base_rate_min": base["minimum_samples"],
@@ -277,9 +306,9 @@ def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
         "training_min_positive": logistic["min_positive"],
         "training_min_negative": logistic["min_negative"],
         "purge_sessions": logistic["purge_sessions"],
-        "calibration_max": platt["max_samples"],
-        "calibration_min_positive": platt["min_positive"],
-        "calibration_min_negative": platt["min_negative"],
+        "calibration_max": rolling["max_samples"],
+        "calibration_min_positive": rolling["min_positive"],
+        "calibration_min_negative": rolling["min_negative"],
         "acceptance_samples": config["acceptance"]["samples"],
     }
     for name, configured in spec_bindings.items():
@@ -310,14 +339,31 @@ def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
         "random_state",
     ):
         _same(errors, f"probability.logistic.{name}", model[name], logistic[name])
+    _same(errors, "probability.rolling_intercept.slope", INTERCEPT_SLOPE, rolling["slope"])
     _same(
         errors,
-        "probability.platt.regularization",
-        _default(fit_platt, "regularization"),
-        platt["regularization"],
+        "probability.rolling_intercept.root_lower",
+        INTERCEPT_ROOT_LOWER,
+        rolling["root_lower"],
     )
-    _same(errors, "probability.platt.clip_min", apply_platt(-1e9, 1.0, 0.0), platt["clip_min"])
-    _same(errors, "probability.platt.clip_max", apply_platt(1e9, 1.0, 0.0), platt["clip_max"])
+    _same(
+        errors,
+        "probability.rolling_intercept.root_upper",
+        INTERCEPT_ROOT_UPPER,
+        rolling["root_upper"],
+    )
+    _same(
+        errors,
+        "probability.rolling_intercept.clip_min",
+        CALIBRATION_CLIP_MIN,
+        rolling["clip_min"],
+    )
+    _same(
+        errors,
+        "probability.rolling_intercept.clip_max",
+        CALIBRATION_CLIP_MAX,
+        rolling["clip_max"],
+    )
     acceptance, facts = config["acceptance"], _facts(acceptance_metrics)
     expected = (
         ("positives", "Lt", float(acceptance["min_positive"])),

@@ -27,6 +27,7 @@ from matvix.narrative import (
     structural_triggers,
     what_changes_the_view,
 )
+from matvix.probability.calibration import apply_intercept
 from matvix.state.scores import component_contributions
 
 CORE_OBSERVATION_FIELDS = [
@@ -326,11 +327,21 @@ def validate_daily_output(payload: dict[str, Any], schema_path: str | Path | Non
     probability = payload.get("probability_judgment", {})
     for event_id, event in probability.items():
         status = event.get("model_status")
-        if status not in {"CALIBRATED_MODEL", "BASE_RATE_ONLY"}:
+        if event_id == "broad_stress_persists_10d" and event.get("event_status") == "ELIGIBLE":
+            if status not in {"BASE_RATE_ONLY", "INSUFFICIENT_HISTORY"}:
+                raise ValueError("Broad probability must remain BASE_RATE_ONLY")
+        if status not in {"CALIBRATED_MODEL", "IDENTITY_WARMUP", "BASE_RATE_ONLY"}:
             continue
         actual = float(event["probability"])
         base = float(event["base_rate"])
         uplift = float(event["uplift"])
+        counts = (
+            int(event["calibration_samples"]),
+            int(event["calibration_positive"]),
+            int(event["calibration_negative"]),
+        )
+        if counts[0] != counts[1] + counts[2]:
+            raise ValueError(f"Probability contract failed for {event_id}: calibration counts")
         if status == "BASE_RATE_ONLY" and not math.isclose(
             actual, base, rel_tol=0.0, abs_tol=1e-12
         ):
@@ -343,3 +354,30 @@ def validate_daily_output(payload: dict[str, Any], schema_path: str | Path | Non
                 f"Probability contract failed for {event_id}: "
                 "uplift must equal probability - base_rate"
             )
+        if status == "BASE_RATE_ONLY" and not (
+            event["raw_probability"] is None
+            and event["intercept_b"] is None
+            and event["calibration_method"] == "NOT_APPLICABLE"
+            and counts == (0, 0, 0)
+        ):
+            raise ValueError(f"Probability contract failed for {event_id}: base-rate metadata")
+        if status == "IDENTITY_WARMUP" and not (
+            event["calibration_method"] == "IDENTITY_WARMUP"
+            and event["intercept_b"] is None
+            and math.isclose(
+                actual, float(event["raw_probability"]), rel_tol=0.0, abs_tol=1e-12
+            )
+        ):
+            raise ValueError(f"Probability contract failed for {event_id}: identity warmup")
+        if status == "CALIBRATED_MODEL":
+            raw = float(event["raw_probability"])
+            intercept = float(event["intercept_b"])
+            if event["calibration_method"] != "ROLLING_INTERCEPT_252" or not math.isclose(
+                actual,
+                apply_intercept(raw, intercept),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                raise ValueError(
+                    f"Probability contract failed for {event_id}: rolling intercept arithmetic"
+                )

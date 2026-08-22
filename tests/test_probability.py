@@ -10,11 +10,16 @@ from conftest import base_state_frame
 from sklearn.linear_model import LogisticRegression
 
 from matvix.calendar import add_sessions, decision_as_of, sessions_in_range
-from matvix.constants import EVENT_ORDER, LOGISTIC_FEATURES
+from matvix.constants import EVENT_ORDER, FEATURE_CONDITIONAL_EVENTS, LOGISTIC_FEATURES
 from matvix.output import build_daily_output, load_schema, validate_daily_output
 from matvix.probability import engine as probability_engine
 from matvix.probability.baseline import beta_smoothed_base_rate
-from matvix.probability.calibration import acceptance_metrics, apply_platt, exact_ece_252, fit_platt
+from matvix.probability.calibration import (
+    acceptance_metrics,
+    apply_intercept,
+    exact_ece_252,
+    fit_intercept,
+)
 from matvix.probability.engine import (
     ProbabilityArtifactContractError,
     build_probability_artifact_contract,
@@ -356,8 +361,10 @@ def test_censored_outcome_does_not_erase_the_real_oof_prediction() -> None:
     after = rerun.loc[pd.to_datetime(rerun["prediction_date"]).eq(prediction_date)].iloc[0]
     assert after["label_status"] == "CENSORED"
     assert pd.isna(after["label"])
-    assert after["decision_score"] == pytest.approx(before["decision_score"], abs=1e-12)
-    assert after["base_probability"] == pytest.approx(before["base_probability"], abs=1e-12)
+    assert after["raw_probability"] == pytest.approx(before["raw_probability"], abs=1e-12)
+    assert after["published_probability"] == pytest.approx(
+        before["published_probability"], abs=1e-12
+    )
 
 
 def test_probability_job_reuses_supplied_history_artifacts(monkeypatch) -> None:
@@ -477,20 +484,20 @@ def test_probability_artifact_append_fits_only_new_date_and_preserves_prediction
 
     assert action == "INCREMENTAL_APPEND"
     assert updated_contract["previous_state_rows"] == len(initial)
-    assert fit_events == list(EVENT_ORDER)
+    assert fit_events == list(FEATURE_CONDITIONAL_EVENTS)
     immutable_prediction_columns = [
         "event_id",
         "prediction_date",
-        "decision_score",
-        "base_probability",
+        "raw_probability",
         "base_rate_at_prediction",
         "training_latest_prediction_date",
         "training_latest_outcome_available_at",
-        "calibrated_probability",
-        "platt_a",
-        "platt_b",
+        "published_probability",
+        "calibration_method",
         "calibration_samples",
-        "calibration_converged",
+        "calibration_positive",
+        "calibration_negative",
+        "intercept_b",
     ]
     old_keys = oof[["event_id", "prediction_date"]]
     preserved = updated_oof.merge(old_keys, on=["event_id", "prediction_date"], how="inner")
@@ -502,12 +509,10 @@ def test_probability_artifact_append_fits_only_new_date_and_preserves_prediction
     ].reset_index(drop=True)
     pd.testing.assert_frame_equal(actual, expected, check_dtype=False)
     for column in (
-        "decision_score",
-        "base_probability",
+        "raw_probability",
         "base_rate_at_prediction",
-        "calibrated_probability",
-        "platt_a",
-        "platt_b",
+        "published_probability",
+        "intercept_b",
     ):
         assert (
             actual[column].to_numpy(dtype=np.float64).tobytes()
@@ -581,12 +586,15 @@ def test_probability_artifact_contract_rejects_spec_or_runtime_mismatch(mismatch
         )
 
 
-def test_platt_calibration_and_clipping() -> None:
-    z = np.linspace(-3, 3, 100)
-    y = (z + np.sin(z) > 0).astype(int)
-    a, b, converged = fit_platt(z, y)
-    assert converged and a > 0
-    p = apply_platt(1000, a, b)
+def test_rolling_intercept_calibration_and_clipping() -> None:
+    raw = np.linspace(0.05, 0.95, 100)
+    y = (raw > 0.55).astype(int)
+    intercept = fit_intercept(raw, y)
+    assert np.isfinite(intercept)
+    assert np.mean([apply_intercept(value, intercept) for value in raw]) == pytest.approx(
+        y.mean(), abs=1e-10
+    )
+    p = apply_intercept(1000, 1000)
     assert p == 1 - 1e-6
 
 
@@ -607,13 +615,13 @@ def test_exact_ece_uses_51_51_50_50_50() -> None:
 
 def test_brier_acceptance_gate() -> None:
     labels = np.tile([0, 1], 126)
-    calibrated = labels * 0.98 + (1 - labels) * 0.02
+    published = labels * 0.98 + (1 - labels) * 0.02
     base = np.full(252, 0.5)
     frame = pd.DataFrame(
         {
             "prediction_date": pd.date_range("2020-01-01", periods=252),
             "label": labels,
-            "calibrated_probability": calibrated,
+            "published_probability": published,
             "base_rate_at_prediction": base,
         }
     )
@@ -625,13 +633,39 @@ def test_brier_acceptance_gate() -> None:
 def _event(
     status: str, model: str, p=None, base=None, uplift=None, kind=None, valid=None, text="x"
 ):
+    if model == "BASE_RATE_ONLY":
+        raw, method, samples, positive, negative, intercept = (
+            None,
+            "NOT_APPLICABLE",
+            0,
+            0,
+            0,
+            None,
+        )
+    elif model == "CALIBRATED_MODEL":
+        raw, method, samples, positive, negative, intercept = (
+            p,
+            "ROLLING_INTERCEPT_252",
+            40,
+            20,
+            20,
+            0.0,
+        )
+    else:
+        raw, method, samples, positive, negative, intercept = (None,) * 6
     return {
         "event_status": status,
         "model_status": model,
         "probability_kind": kind,
+        "raw_probability": raw,
         "probability": p,
         "base_rate": base,
         "uplift": uplift,
+        "calibration_method": method,
+        "calibration_samples": samples,
+        "calibration_positive": positive,
+        "calibration_negative": negative,
+        "intercept_b": intercept,
         "valid_through_session": valid,
         "interpretation": text,
     }
@@ -670,9 +704,15 @@ def test_daily_output_rejects_probability_arithmetic_mismatch() -> None:
             "event_status": "ELIGIBLE",
             "model_status": "BASE_RATE_ONLY",
             "probability_kind": "HISTORICAL_REFERENCE",
+            "raw_probability": None,
             "probability": 0.42,
             "base_rate": 0.31,
             "uplift": 0.0,
+            "calibration_method": "NOT_APPLICABLE",
+            "calibration_samples": 0,
+            "calibration_positive": 0,
+            "calibration_negative": 0,
+            "intercept_b": None,
             "valid_through_session": "2025-01-10",
             "interpretation": "当前只使用同类历史发生率，特征模型未提供增量判断",
         }

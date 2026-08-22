@@ -11,9 +11,9 @@ from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
 
 from matvix.calendar import add_sessions, decision_as_of
-from matvix.constants import LOGISTIC_FEATURES
+from matvix.constants import BASE_RATE_ONLY_EVENTS, LOGISTIC_FEATURES
 from matvix.probability.baseline import beta_smoothed_base_rate
-from matvix.probability.calibration import acceptance_metrics, apply_platt, fit_platt
+from matvix.probability.calibration import acceptance_metrics, apply_intercept, fit_intercept
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ class ProbabilitySpec:
     training_min_positive: int = 30
     training_min_negative: int = 30
     purge_sessions: int = 20
-    calibration_max: int = 504
+    calibration_max: int = 252
     calibration_min_positive: int = 20
     calibration_min_negative: int = 20
     acceptance_samples: int = 252
@@ -181,22 +181,34 @@ def _build_raw_oof_rows(
         training = _completed_before(merged, prediction_date, purge_sessions=spec.purge_sessions)
         completed = _completed_before(merged, prediction_date, purge_sessions=None)
         base_rate, base_meta = _base_rate(completed, spec)
-        model, model_meta = _fit_model(training, event, spec)
-        if model is None or row[features].isna().any():
+        if event in BASE_RATE_ONLY_EVENTS:
+            if base_rate is None:
+                continue
+            model = None
+            model_meta: dict[str, Any] = {
+                "training_samples": 0,
+                "training_positive": 0,
+                "training_negative": 0,
+                "converged": False,
+            }
+        else:
+            model, model_meta = _fit_model(training, event, spec)
+        if event not in BASE_RATE_ONLY_EVENTS and (
+            model is None or row[features].isna().any()
+        ):
             continue
-        latest_training_prediction = (
-            pd.Timestamp(training["prediction_date"].max()).normalize()
-            if not training.empty
-            else pd.NaT
-        )
-        latest_training_outcome = (
-            pd.to_datetime(training["outcome_available_at"], utc=True).max()
-            if not training.empty
-            else pd.NaT
-        )
-        x = row[features].to_numpy(dtype=float).reshape(1, -1)
-        decision_score = float(model.decision_function(x)[0])
-        base_probability = float(model.predict_proba(x)[0, 1])
+        if event in BASE_RATE_ONLY_EVENTS:
+            latest_training_prediction = pd.NaT
+            latest_training_outcome = pd.NaT
+            raw_probability = np.nan
+        else:
+            assert model is not None
+            latest_training_prediction = pd.Timestamp(training["prediction_date"].max()).normalize()
+            latest_training_outcome = pd.to_datetime(
+                training["outcome_available_at"], utc=True
+            ).max()
+            x = row[features].to_numpy(dtype=float).reshape(1, -1)
+            raw_probability = float(model.predict_proba(x)[0, 1])
         label_observed = row["label_status"] in ("OBSERVED_0", "OBSERVED_1")
         records.append(
             {
@@ -205,8 +217,7 @@ def _build_raw_oof_rows(
                 "outcome_available_at": row["outcome_available_at"],
                 "label": int(row["label"]) if label_observed else np.nan,
                 "label_status": row["label_status"],
-                "decision_score": decision_score,
-                "base_probability": base_probability,
+                "raw_probability": raw_probability,
                 "base_rate_at_prediction": base_rate,
                 # Persist the actual boundary used by this sequential fit so
                 # purge and completed-outcome invariants are auditable from
@@ -221,11 +232,12 @@ def _build_raw_oof_rows(
 
 
 _CALIBRATION_COLUMNS = (
-    "calibrated_probability",
-    "platt_a",
-    "platt_b",
+    "published_probability",
+    "calibration_method",
     "calibration_samples",
-    "calibration_converged",
+    "calibration_positive",
+    "calibration_negative",
+    "intercept_b",
 )
 
 
@@ -250,14 +262,28 @@ def _append_sequential_calibration(
                 "Existing OOF ledger lacks sequential calibration columns: " + ", ".join(missing)
             )
     else:
-        oof["calibrated_probability"] = np.nan
-        oof["platt_a"] = np.nan
-        oof["platt_b"] = np.nan
+        oof["published_probability"] = oof["raw_probability"]
+        base_only = oof["raw_probability"].isna() & oof["base_rate_at_prediction"].notna()
+        oof.loc[base_only, "published_probability"] = oof.loc[
+            base_only, "base_rate_at_prediction"
+        ]
+        oof["calibration_method"] = "IDENTITY_WARMUP"
+        oof.loc[base_only, "calibration_method"] = "NOT_APPLICABLE"
         oof["calibration_samples"] = 0
-        oof["calibration_converged"] = False
+        oof["calibration_positive"] = 0
+        oof["calibration_negative"] = 0
+        oof["intercept_b"] = np.nan
 
     for index in range(start_index, len(oof)):
         row = oof.iloc[index]
+        if pd.isna(row["raw_probability"]):
+            oof.at[index, "published_probability"] = row["base_rate_at_prediction"]
+            oof.at[index, "calibration_method"] = "NOT_APPLICABLE"
+            oof.at[index, "calibration_samples"] = 0
+            oof.at[index, "calibration_positive"] = 0
+            oof.at[index, "calibration_negative"] = 0
+            oof.at[index, "intercept_b"] = np.nan
+            continue
         prediction_date = pd.Timestamp(row["prediction_date"])
         as_of = pd.Timestamp(decision_as_of(prediction_date)).tz_convert("UTC")
         prior = oof.iloc[:index].copy()
@@ -268,27 +294,24 @@ def _append_sequential_calibration(
             ].tail(spec.calibration_max)
         positives = int(prior["label"].sum()) if not prior.empty else 0
         negatives = len(prior) - positives
+        oof.at[index, "calibration_samples"] = len(prior)
+        oof.at[index, "calibration_positive"] = positives
+        oof.at[index, "calibration_negative"] = negatives
         if (
             len(prior) < spec.calibration_min_positive + spec.calibration_min_negative
             or positives < spec.calibration_min_positive
             or negatives < spec.calibration_min_negative
         ):
-            oof.at[index, "calibrated_probability"] = np.nan
-            oof.at[index, "platt_a"] = np.nan
-            oof.at[index, "platt_b"] = np.nan
-            oof.at[index, "calibration_samples"] = len(prior)
-            oof.at[index, "calibration_converged"] = False
+            oof.at[index, "published_probability"] = row["raw_probability"]
+            oof.at[index, "calibration_method"] = "IDENTITY_WARMUP"
+            oof.at[index, "intercept_b"] = np.nan
             continue
-        a, b, converged = fit_platt(prior["decision_score"].to_numpy(), prior["label"].to_numpy())
-        if not converged:
-            calibrated_probability = np.nan
-        else:
-            calibrated_probability = apply_platt(float(row["decision_score"]), a, b)
-        oof.at[index, "calibrated_probability"] = calibrated_probability
-        oof.at[index, "platt_a"] = a
-        oof.at[index, "platt_b"] = b
-        oof.at[index, "calibration_samples"] = len(prior)
-        oof.at[index, "calibration_converged"] = bool(converged)
+        intercept = fit_intercept(prior["raw_probability"].to_numpy(), prior["label"].to_numpy())
+        oof.at[index, "published_probability"] = apply_intercept(
+            float(row["raw_probability"]), intercept
+        )
+        oof.at[index, "calibration_method"] = "ROLLING_INTERCEPT_252"
+        oof.at[index, "intercept_b"] = intercept
     return oof
 
 
@@ -303,7 +326,7 @@ def extend_oof_ledger(
 ) -> pd.DataFrame:
     """Refresh outcomes and append only genuinely new sequential predictions.
 
-    The raw and calibrated probability fields on existing rows are immutable.
+    The raw and published probability fields on existing rows are immutable.
     Labels can move from ``CENSORED`` to observed when a newly appended state
     closes their complete outcome horizon.
     """
@@ -347,10 +370,14 @@ def extend_oof_ledger(
             dates = ", ".join(sorted(value.date().isoformat() for value in duplicate))
             raise ValueError(f"Incremental OOF append would duplicate prediction dates: {dates}")
         for column in _CALIBRATION_COLUMNS:
-            if column == "calibration_converged":
-                appended[column] = False
-            elif column == "calibration_samples":
+            if column in {
+                "calibration_samples",
+                "calibration_positive",
+                "calibration_negative",
+            }:
                 appended[column] = 0
+            elif column == "calibration_method":
+                appended[column] = "IDENTITY_WARMUP"
             else:
                 appended[column] = np.nan
         combined = pd.concat([existing, appended], ignore_index=True, sort=False)
@@ -369,7 +396,7 @@ def validation_as_of(
         return {"accepted": False, "samples": 0}
     as_of = pd.Timestamp(decision_as_of(prediction_date)).tz_convert("UTC")
     completed = oof.loc[
-        oof["calibrated_probability"].notna()
+        oof["published_probability"].notna()
         & oof["base_rate_at_prediction"].notna()
         & (pd.to_datetime(oof["outcome_available_at"], utc=True) <= as_of)
         & (pd.to_datetime(oof["prediction_date"]) < prediction_date)
@@ -397,5 +424,14 @@ def train_current_model(
     training = _completed_before(merged, prediction_date, purge_sessions=spec.purge_sessions)
     completed = _completed_before(merged, prediction_date, purge_sessions=None)
     rate, base_meta = _base_rate(completed, spec)
-    model, model_meta = _fit_model(training, event, spec)
+    if event in BASE_RATE_ONLY_EVENTS:
+        model = None
+        model_meta = {
+            "training_samples": 0,
+            "training_positive": 0,
+            "training_negative": 0,
+            "converged": False,
+        }
+    else:
+        model, model_meta = _fit_model(training, event, spec)
     return model, model_meta, rate, base_meta

@@ -1,10 +1,16 @@
-version: "2.0.0"
+version: "3.0.0"
 event_order:
   - acute_front_stress_5d
   - front_inversion_5d
   - mid_curve_pressure_accelerates_5d
   - broad_stress_persists_10d
   - carry_environment_recovers_10d
+event_policy:
+  acute_front_stress_5d: FEATURE_CONDITIONAL_REQUIRED
+  front_inversion_5d: FEATURE_CONDITIONAL_REQUIRED
+  mid_curve_pressure_accelerates_5d: FEATURE_CONDITIONAL_REQUIRED
+  broad_stress_persists_10d: BASE_RATE_ONLY_EXEMPT
+  carry_environment_recovers_10d: FEATURE_CONDITIONAL_REQUIRED
 base_rate:
   max_samples: 756
   minimum_samples: 252
@@ -26,14 +32,14 @@ logistic:
   min_positive: 30
   min_negative: 30
   purge_sessions: 20
-platt:
-  max_samples: 504
+rolling_intercept:
+  implementation: scipy.optimize.brentq
+  max_samples: 252
   min_positive: 20
   min_negative: 20
-  regularization: 1.0e-6
-  maxiter: 1000
-  ftol: 1.0e-12
-  gtol: 1.0e-8
+  slope: 1.0
+  root_lower: -40.0
+  root_upper: 40.0
   clip_min: 1.0e-6
   clip_max: 0.999999
 acceptance:

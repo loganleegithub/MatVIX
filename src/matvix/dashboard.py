@@ -1046,9 +1046,9 @@ def _history_chart(history: pd.DataFrame | None, session: str) -> str:
 
 
 def _probability_history_chart(oof: pd.DataFrame | None, session: str) -> str:
-    required = {"event_id", "prediction_date", "calibrated_probability", "base_rate_at_prediction"}
+    required = {"event_id", "prediction_date", "published_probability", "base_rate_at_prediction"}
     if oof is None or oof.empty or not required.issubset(oof.columns):
-        return '<div class="box">当前没有可展示的 calibrated OOF 概率路径</div>'
+        return '<div class="box">当前没有可展示的 published OOF 概率路径</div>'
     frame = oof.copy()
     frame["prediction_date"] = pd.to_datetime(frame["prediction_date"]).dt.normalize()
     frame = frame.loc[frame["prediction_date"] <= pd.Timestamp(session)]
@@ -1059,7 +1059,7 @@ def _probability_history_chart(oof: pd.DataFrame | None, session: str) -> str:
         figure.add_trace(
             go.Scatter(
                 x=event_frame["prediction_date"],
-                y=event_frame["calibrated_probability"],
+                y=event_frame["published_probability"],
                 mode="lines",
                 name=f"{label} · 模型",
             )

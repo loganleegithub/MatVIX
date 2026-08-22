@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://matvix.local/schemas/daily_output.schema.json",
-  "title": "MatVIX v2 Daily Output",
+  "title": "MatVIX v3 Daily Output",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,19 +22,19 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "2.0.0"
+      "const": "3.0.0"
     },
     "model_id": {
-      "const": "MATVIX_CBOE_CORE_V2"
+      "const": "MATVIX_CBOE_CORE_V3"
     },
     "feature_version": {
-      "const": "2.0.0"
+      "const": "3.0.0"
     },
     "state_version": {
-      "const": "2.0.0"
+      "const": "3.0.0"
     },
     "probability_version": {
-      "const": "2.0.0"
+      "const": "3.0.0"
     },
     "input_manifest_hash": {
       "type": "string",
@@ -393,9 +393,15 @@
         "event_status",
         "model_status",
         "probability_kind",
+        "raw_probability",
         "probability",
         "base_rate",
         "uplift",
+        "calibration_method",
+        "calibration_samples",
+        "calibration_positive",
+        "calibration_negative",
+        "intercept_b",
         "valid_through_session",
         "interpretation"
       ],
@@ -410,6 +416,7 @@
         "model_status": {
           "enum": [
             "CALIBRATED_MODEL",
+            "IDENTITY_WARMUP",
             "BASE_RATE_ONLY",
             "INSUFFICIENT_HISTORY",
             "NOT_RUN"
@@ -434,6 +441,14 @@
           "minimum": 0,
           "maximum": 1
         },
+        "raw_probability": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
         "base_rate": {
           "type": [
             "number",
@@ -449,6 +464,48 @@
           ],
           "minimum": -1,
           "maximum": 1
+        },
+        "calibration_method": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "ROLLING_INTERCEPT_252",
+            "IDENTITY_WARMUP",
+            "NOT_APPLICABLE",
+            null
+          ]
+        },
+        "calibration_samples": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 252
+        },
+        "calibration_positive": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 252
+        },
+        "calibration_negative": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 252
+        },
+        "intercept_b": {
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "valid_through_session": {
           "type": [
@@ -480,6 +537,9 @@
                 "probability_kind": {
                   "const": "FEATURE_CONDITIONAL"
                 },
+                "raw_probability": {
+                  "type": "number"
+                },
                 "probability": {
                   "type": "number"
                 },
@@ -488,6 +548,64 @@
                 },
                 "uplift": {
                   "type": "number"
+                },
+                "calibration_method": {
+                  "const": "ROLLING_INTERCEPT_252"
+                },
+                "calibration_samples": {
+                  "type": "integer"
+                },
+                "calibration_positive": {
+                  "type": "integer"
+                },
+                "calibration_negative": {
+                  "type": "integer"
+                },
+                "intercept_b": {
+                  "type": "number"
+                },
+                "valid_through_session": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "properties": {
+                "event_status": {
+                  "const": "ELIGIBLE"
+                },
+                "model_status": {
+                  "const": "IDENTITY_WARMUP"
+                },
+                "probability_kind": {
+                  "const": "FEATURE_CONDITIONAL"
+                },
+                "raw_probability": {
+                  "type": "number"
+                },
+                "probability": {
+                  "type": "number"
+                },
+                "base_rate": {
+                  "type": "number"
+                },
+                "uplift": {
+                  "type": "number"
+                },
+                "calibration_method": {
+                  "const": "IDENTITY_WARMUP"
+                },
+                "calibration_samples": {
+                  "type": "integer"
+                },
+                "calibration_positive": {
+                  "type": "integer"
+                },
+                "calibration_negative": {
+                  "type": "integer"
+                },
+                "intercept_b": {
+                  "const": null
                 },
                 "valid_through_session": {
                   "type": "string"
@@ -505,6 +623,9 @@
                 "probability_kind": {
                   "const": "HISTORICAL_REFERENCE"
                 },
+                "raw_probability": {
+                  "const": null
+                },
                 "probability": {
                   "type": "number"
                 },
@@ -513,6 +634,21 @@
                 },
                 "uplift": {
                   "const": 0.0
+                },
+                "calibration_method": {
+                  "const": "NOT_APPLICABLE"
+                },
+                "calibration_samples": {
+                  "const": 0
+                },
+                "calibration_positive": {
+                  "const": 0
+                },
+                "calibration_negative": {
+                  "const": 0
+                },
+                "intercept_b": {
+                  "const": null
                 },
                 "valid_through_session": {
                   "type": "string"
@@ -530,6 +666,9 @@
                 "probability_kind": {
                   "const": null
                 },
+                "raw_probability": {
+                  "const": null
+                },
                 "probability": {
                   "const": null
                 },
@@ -537,6 +676,21 @@
                   "const": null
                 },
                 "uplift": {
+                  "const": null
+                },
+                "calibration_method": {
+                  "const": null
+                },
+                "calibration_samples": {
+                  "const": null
+                },
+                "calibration_positive": {
+                  "const": null
+                },
+                "calibration_negative": {
+                  "const": null
+                },
+                "intercept_b": {
                   "const": null
                 },
                 "valid_through_session": {
@@ -555,6 +709,9 @@
                 "probability_kind": {
                   "const": null
                 },
+                "raw_probability": {
+                  "const": null
+                },
                 "probability": {
                   "const": null
                 },
@@ -562,6 +719,21 @@
                   "const": null
                 },
                 "uplift": {
+                  "const": null
+                },
+                "calibration_method": {
+                  "const": null
+                },
+                "calibration_samples": {
+                  "const": null
+                },
+                "calibration_positive": {
+                  "const": null
+                },
+                "calibration_negative": {
+                  "const": null
+                },
+                "intercept_b": {
                   "const": null
                 },
                 "valid_through_session": {
@@ -580,6 +752,9 @@
                 "probability_kind": {
                   "const": null
                 },
+                "raw_probability": {
+                  "const": null
+                },
                 "probability": {
                   "const": null
                 },
@@ -587,6 +762,21 @@
                   "const": null
                 },
                 "uplift": {
+                  "const": null
+                },
+                "calibration_method": {
+                  "const": null
+                },
+                "calibration_samples": {
+                  "const": null
+                },
+                "calibration_positive": {
+                  "const": null
+                },
+                "calibration_negative": {
+                  "const": null
+                },
+                "intercept_b": {
                   "const": null
                 },
                 "valid_through_session": {
@@ -605,6 +795,9 @@
                 "probability_kind": {
                   "const": null
                 },
+                "raw_probability": {
+                  "const": null
+                },
                 "probability": {
                   "const": null
                 },
@@ -612,6 +805,21 @@
                   "const": null
                 },
                 "uplift": {
+                  "const": null
+                },
+                "calibration_method": {
+                  "const": null
+                },
+                "calibration_samples": {
+                  "const": null
+                },
+                "calibration_positive": {
+                  "const": null
+                },
+                "calibration_negative": {
+                  "const": null
+                },
+                "intercept_b": {
                   "const": null
                 },
                 "valid_through_session": {

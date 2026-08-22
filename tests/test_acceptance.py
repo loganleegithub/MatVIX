@@ -12,8 +12,8 @@ from matvix.acceptance import (
     _audit_real_observations,
     _audit_real_vx,
     _calibration_integrity_passes,
-    _completed_calibrated_validation,
-    _platt_row_is_arithmetically_valid,
+    _calibration_row_is_arithmetically_valid,
+    _completed_published_validation,
     _station_curve_formula_valid,
     _station_probability_model_assessment,
     _station_tenor_stage_masks,
@@ -35,13 +35,35 @@ def _event(
     probability_kind: str | None = None,
     valid_through_session: str | None = None,
 ) -> dict[str, object]:
+    if model_status == "BASE_RATE_ONLY":
+        raw_probability = None
+        calibration_method = "NOT_APPLICABLE"
+        calibration_samples = calibration_positive = calibration_negative = 0
+        intercept_b = None
+    elif model_status == "CALIBRATED_MODEL":
+        raw_probability = probability
+        calibration_method = "ROLLING_INTERCEPT_252"
+        calibration_samples = 40
+        calibration_positive = calibration_negative = 20
+        intercept_b = 0.0
+    else:
+        raw_probability = None
+        calibration_method = None
+        calibration_samples = calibration_positive = calibration_negative = None
+        intercept_b = None
     return {
         "event_status": event_status,
         "model_status": model_status,
         "probability_kind": probability_kind,
+        "raw_probability": raw_probability,
         "probability": probability,
         "base_rate": base_rate,
         "uplift": uplift,
+        "calibration_method": calibration_method,
+        "calibration_samples": calibration_samples,
+        "calibration_positive": calibration_positive,
+        "calibration_negative": calibration_negative,
+        "intercept_b": intercept_b,
         "valid_through_session": valid_through_session,
         "interpretation": "验收测试",
     }
@@ -197,7 +219,7 @@ def test_real_vx_audit_rejects_wrong_source_identity(
     assert evidence["snapshot_contracts_available"] == 0
 
 
-def test_validation_requires_252_completed_calibrated_oof_but_may_reject_model() -> None:
+def test_validation_requires_252_completed_published_oof_but_may_reject_model() -> None:
     dates = pd.bdate_range("2023-01-02", periods=252)
     frame = pd.DataFrame(
         {
@@ -206,16 +228,16 @@ def test_validation_requires_252_completed_calibrated_oof_but_may_reject_model()
             "outcome_available_at": pd.to_datetime(dates, utc=True),
             "label_status": ["OBSERVED_1" if i % 5 == 0 else "OBSERVED_0" for i in range(252)],
             "label": [1 if i % 5 == 0 else 0 for i in range(252)],
-            "calibrated_probability": 0.5,
+            "published_probability": 0.5,
             "base_rate_at_prediction": 0.2,
         }
     )
     snapshot_date = pd.Timestamp("2025-01-02")
 
-    incomplete, incomplete_evidence = _completed_calibrated_validation(
+    incomplete, incomplete_evidence = _completed_published_validation(
         frame.iloc[:-1], "carry_environment_recovers_10d", snapshot_date
     )
-    complete, complete_evidence = _completed_calibrated_validation(
+    complete, complete_evidence = _completed_published_validation(
         frame, "carry_environment_recovers_10d", snapshot_date
     )
 
@@ -230,14 +252,18 @@ def test_calibration_integrity_does_not_require_model_publication_acceptance() -
     events = {
         event: {
             "raw_oof": 300,
-            "calibrated_oof": 100,
+            "published_oof": 100,
+            "base_rate_reference_oof": 0,
             "validation_complete": False,
         }
         for event in EVENT_ORDER
     }
 
+    events["broad_stress_persists_10d"].update(
+        {"raw_oof": 0, "base_rate_reference_oof": 100}
+    )
     assert _calibration_integrity_passes(events, []) is True
-    events["broad_stress_persists_10d"]["calibrated_oof"] = 0
+    events["broad_stress_persists_10d"]["base_rate_reference_oof"] = 0
     assert _calibration_integrity_passes(events, []) is False
 
 
@@ -287,7 +313,7 @@ def test_station_probability_model_assessment_preserves_mixed_evidence() -> None
     assert status == "FAIL"
     assert evidence["events"]["acute_front_stress_5d"]["status"] == "PASS"
     assert evidence["events"]["broad_stress_persists_10d"]["status"] == (
-        "INSUFFICIENT_EVIDENCE"
+        "BASE_RATE_ONLY_EXEMPT"
     )
     assert evidence["events"]["carry_environment_recovers_10d"]["status"] == "FAIL"
 
@@ -307,21 +333,20 @@ def test_station_tenor_stage_masks_require_broad_scope_for_diffusing_and_priced(
     assert masks["RECEDING"].tolist() == [False, False, False, True]
 
 
-def test_platt_probability_must_equal_sigmoid_of_persisted_parameters() -> None:
+def test_rolling_intercept_probability_must_match_persisted_intercept() -> None:
     valid = pd.Series(
         {
-            "decision_score": 0.0,
-            "platt_a": 1.0,
-            "platt_b": 0.0,
-            "calibrated_probability": 0.5,
-            "calibration_converged": True,
+            "raw_probability": 0.5,
+            "intercept_b": 0.0,
+            "published_probability": 0.5,
+            "calibration_method": "ROLLING_INTERCEPT_252",
         }
     )
     invalid = valid.copy()
-    invalid["calibrated_probability"] = 0.6
+    invalid["published_probability"] = 0.6
 
-    assert _platt_row_is_arithmetically_valid(valid)
-    assert not _platt_row_is_arithmetically_valid(invalid)
+    assert _calibration_row_is_arithmetically_valid(valid)
+    assert not _calibration_row_is_arithmetically_valid(invalid)
 
 
 def test_oof_gate_recomputes_and_rejects_false_training_boundary() -> None:
@@ -353,8 +378,8 @@ def test_oof_gate_recomputes_and_rejects_false_training_boundary() -> None:
                 "outcome_available_at": decision_as_of(prediction_date),
                 "label": int(labels[prediction_index]),
                 "label_status": ("OBSERVED_1" if labels[prediction_index] else "OBSERVED_0"),
-                "decision_score": 0.0,
-                "base_probability": 0.5,
+                "raw_probability": 0.5,
+                "published_probability": 0.5,
                 "base_rate_at_prediction": (base_positive + 1) / (base_count + 2),
                 "base_rate_samples": base_count,
                 "base_rate_positive": base_positive,
@@ -366,11 +391,11 @@ def test_oof_gate_recomputes_and_rejects_false_training_boundary() -> None:
                 "training_latest_prediction_date": prediction_date,
                 "training_latest_outcome_available_at": decision_as_of(dates.iloc[training_end]),
                 "converged": True,
-                "calibrated_probability": np.nan,
-                "platt_a": np.nan,
-                "platt_b": np.nan,
+                "calibration_method": "IDENTITY_WARMUP",
                 "calibration_samples": 0,
-                "calibration_converged": False,
+                "calibration_positive": 0,
+                "calibration_negative": 0,
+                "intercept_b": np.nan,
             }
         ]
     )

@@ -295,20 +295,22 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - layer：PROBABILITY
 - observed symptom：Carry 最新 252 中 173 行负 Platt slope，Broad 80 行；两者 reliability
   排序倒置，504-row cohort 对当前基准率滞后。
-- reproduction command：`.venv/bin/python -m matvix audit-v3 --project-dir .`
+- reproduction command：`.venv/bin/python -m matvix train-probabilities --full-rebuild
+  --project-dir .`，随后 `.venv/bin/python -m matvix accept-real --date 2026-08-20
+  --project-dir .`。
 - causal evidence：Platt 算术误差 0、cohort count mismatch 0；score 年度尺度漂移、负 slope 与
   reliability 倒置同时出现。
 - business consequence：published probability 可能把风险排序反向，不能诚实驱动状态解释或适配器。
 - minimal repair：固定 slope=1，仅拟合 prior outcome-available raw OOF 的 252-row intercept；warm-up
   明示 `IDENTITY_WARMUP`。
 - rejected alternatives：自由/负 slope、event-specific calibrator、窗口扫描、同日择优 raw/calibrated。
-- affected existing files：未来仅限 `probability/calibration.py`、`walk_forward.py`、`engine.py`、
-  配置、Schema、acceptance 与对应测试；本轮未修改。
-- semantic/version impact：若施工则 probability/output/model/package 升 3.0.0；本轮未升版。
+- affected existing files：`probability/calibration.py`、`walk_forward.py`、`engine.py`、配置合同、
+  Schema、acceptance、dashboard、pipeline 与对应测试；一次性 Stage-A Python 脚手架已按 12.9 删除。
+- semantic/version impact：probability/output/model/package 已升 3.0.0；artifact contract 已升 2。
 - station acceptance criterion：无负 slope；逐行 publication 算术、cohort、purge、append invariance
   可重放；三个当前 PASS 事件不退化；五个必需条件模型各自满足 252/20/20/Skill/ECE 门。
 - economic relevance：只修复概率可信度，不直接证明收益。
-- status：`AUDIT_CONFIRMED / SPEC_FROZEN / IMPLEMENTATION_AUTHORIZED`
+- status：`IMPLEMENTED / FORMAL_HISTORICAL_REPLAY_PASS`
 
 ### 9.2 `PROB-CARRY-002`
 
@@ -344,12 +346,12 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - minimal repair：不施工模型；保留 10D 事件语义并强制 `BASE_RATE_ONLY / HISTORICAL_REFERENCE`。
 - rejected alternatives：5D 替代 10D、Bayesian prior 伪增样本、feature/window/regularization scan、
   event-specific 算法。
-- affected existing files：概率配置、publication、acceptance、Schema 与测试；不增加 Broad predictors。
-- semantic/version impact：概率发布与 Schema 升 3.0.0；事件标签语义不变。
+- affected existing files：概率配置、publication、acceptance、Schema 与测试；Broad predictor 列表为空。
+- semantic/version impact：概率发布与 Schema 已升 3.0.0；事件标签语义不变。
 - station acceptance criterion：逐行因果 base rate、PIT、censoring、append invariance 与
   `BASE_RATE_ONLY` 标记一致；不参加模型 Skill/ECE 门且绝不被称为模型 PASS。
 - economic relevance：只作为天气历史参考，不直接进入 Fragility adapter 谓词。
-- status：`AUDIT_FAIL_PRESERVED / CLOSED_BY_HUMAN_SCOPE / BASE_RATE_ONLY`
+- status：`IMPLEMENTED / BASE_RATE_REFERENCE_PASS / NO_MODEL_PASS_CLAIM`
 
 ### 9.4 `PROB-FRAGILITY-002`
 
@@ -468,8 +470,6 @@ NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION
 ```
-
----
 
 ## 12. 阶段 B：V3 语义与 Schema 冻结
 
@@ -806,6 +806,54 @@ PROB-CARRY-002_IMPLEMENTATION_AUTHORIZED
 PROB-FRAGILITY-002_IMPLEMENTATION_AUTHORIZED
 STATE-CHURN-002_IMPLEMENTATION_AUTHORIZED_LIMITED
 PROB-BROAD-002_CLOSED_BASE_RATE_ONLY
+STAGE_D_NOT_RUN
+ADAPTER_BLOCKED
+ECONOMIC_PROBE_BLOCKED
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+---
+
+## 13. 阶段 C 正式施工账本
+
+### 13.1 `PROB-CAL-002` 与 Broad 基准率参考
+
+在冻结实现上执行一次全历史价格盲重建，随后对 `2026-08-20` 最新完整 session 执行正式
+`accept-real`。13 个气象站与概率完整性 gate 全部通过。最新 252 个完成且当时可发布 OOF 为：
+
+| 事件 | publication policy | samples | Brier Skill | ECE | 结论 |
+|---|---|---:|---:|---:|---|
+| `acute_front_stress_5d` | conditional | 252 | 7.13% | 3.17% | PASS |
+| `front_inversion_5d` | conditional | 252 | 10.71% | 3.00% | PASS |
+| `mid_curve_pressure_accelerates_5d` | conditional | 252 | 11.79% | 5.08% | PASS |
+| `carry_environment_recovers_10d` | conditional，尚未加入 duration facts | 252 | 9.67% | 6.81% | PASS |
+| `broad_stress_persists_10d` | base-rate reference | 267 reference rows | — | — | PASS / EXEMPT |
+
+本结果证明 rolling intercept、Schema 3.0、artifact contract 2、Broad 零训练路径和逐行重放满足
+当前正式历史账本门；它复用了 V3 立项前已检查的历史，只能标记
+`FORMAL_HISTORICAL_REPLAY_PASS`，不是独立前向确认。Carry 行只证明 `PROB-CAL-002` 下的旧六项
+predictor 仍通过，不关闭下一项 `PROB-CARRY-002`。
+
+本地忽略证据 hash：
+
+```text
+target_ledger.parquet  fb91968643c2b65fa28f72fa77ca485cb4db934c1e59d20fb554cf2d00939913
+oof_ledger.parquet     357ca2b737880e1d1f7220d81feb8925772317e057ab44d31a3ab8add182bcb7
+artifact_contract.json 25fb9e58443eb4c2f3b0b2afa2cb2dedcf4fddcff7ed55a5db284475846f0a02
+real_acceptance.json   f9750664900d6fb9cc26b5d9d5a622a1421cc50e546885a2eefd0a4bb1043640
+```
+
+代码验证：225 项 pytest 全通过，Ruff 全通过，Mypy 全通过，doctor 全通过；相对冻结 V2 基线的
+非生成 Python 与测试净新增 344 行，未超过 1,500 行预算。
+
+```text
+PROB-CAL-002=PASS
+PROB-BROAD-002=BASE_RATE_REFERENCE_PASS
+PROB-CARRY-002=NEXT_AUTHORIZED
+PROB-FRAGILITY-002=NOT_RUN
+STATE-CHURN-002=NOT_RUN
 STAGE_D_NOT_RUN
 ADAPTER_BLOCKED
 ECONOMIC_PROBE_BLOCKED

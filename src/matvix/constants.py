@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-SCHEMA_VERSION = "2.0.0"
-MODEL_ID = "MATVIX_CBOE_CORE_V2"
-FEATURE_VERSION = "2.0.0"
-STATE_VERSION = "2.0.0"
-PROBABILITY_VERSION = "2.0.0"
+SCHEMA_VERSION = "3.0.0"
+MODEL_ID = "MATVIX_CBOE_CORE_V3"
+FEATURE_VERSION = "3.0.0"
+STATE_VERSION = "3.0.0"
+PROBABILITY_VERSION = "3.0.0"
 
 
 class VintageKind(StrEnum):
@@ -61,12 +61,6 @@ LOGISTIC_FEATURES = {
         "score_change5_scaled",
     ],
     "broad_stress_persists_10d": [
-        "p_f4_f7_level",
-        "p_neg_f4_f7_slope30",
-        "f4_f7_inversion_share",
-        "p_d5_log_f4_f7_level",
-        "shock_scaled",
-        "score_change5_scaled",
     ],
     "carry_environment_recovers_10d": [
         "repair_scaled",
@@ -77,3 +71,8 @@ LOGISTIC_FEATURES = {
         "shock_scaled",
     ],
 }
+
+BASE_RATE_ONLY_EVENTS = ("broad_stress_persists_10d",)
+FEATURE_CONDITIONAL_EVENTS = tuple(
+    event for event in EVENT_ORDER if event not in BASE_RATE_ONLY_EVENTS
+)
