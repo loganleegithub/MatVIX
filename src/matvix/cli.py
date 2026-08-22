@@ -38,6 +38,7 @@ from matvix.data.cboe import SUPPORTED_SYMBOLS, download_cboe_core, import_cboe_
 from matvix.data.cfe import download_monthly_history, import_cfe_directory
 from matvix.data.point_in_time import merge_revision_history
 from matvix.data.spx import import_spx_close
+from matvix.economic_probe import run_frozen_economic_probe
 from matvix.http_runtime import serve_dashboard_runtime
 from matvix.pipeline import (
     ProjectPaths,
@@ -173,6 +174,30 @@ def accept_v2_station(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
     for name, result in summary["dimensions"].items():
         typer.echo(f"{name}: {result['status']}")
     typer.echo(f"ECONOMIC_PROBE_ENTRY: {summary['economic_probe_entry']['status']}")
+    for path in outputs.values():
+        typer.echo(f"Wrote {path}")
+
+
+@app.command("run-v2-economic-probe")
+def run_v2_economic_probe(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
+    """Run the one frozen SVXY/SGOV/VXZ probe after the Phase-D entry gate."""
+
+    root = project_dir.resolve()
+    station_path = root / "outputs" / "v2_station_acceptance" / "summary.json"
+    station = read_json(station_path)
+    if station.get("economic_probe_entry", {}).get("status") != "PASS":
+        raise typer.BadParameter(
+            "Economic probe is blocked until the four key station dimensions pass"
+        )
+    outputs, report = run_frozen_economic_probe(
+        project_root=root,
+        v1_states=read_parquet(root / "outputs" / "v2_baseline" / "v1_states.parquet"),
+        v2_states=read_parquet(root / "data" / "processed" / "states.parquet"),
+        station_summary=station,
+    )
+    for probe, result in report["classifications"].items():
+        typer.echo(f"{probe}: {result}")
+    typer.echo(f"COMPREHENSIVE_VERDICT: {report['comprehensive_verdict']}")
     for path in outputs.values():
         typer.echo(f"Wrote {path}")
 

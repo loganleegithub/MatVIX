@@ -10,6 +10,7 @@ __pycache__/
 # Raw downloads, derived tables, model ledgers, and rendered outputs are local artifacts.
 data/raw/vendor/
 data/raw/live/
+data/raw/economic_probe/
 data/raw/*.parquet
 data/processed/
 data/probability/*
