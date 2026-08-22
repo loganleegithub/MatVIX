@@ -1,3 +1,3 @@
-"""MatVIX v1 public package."""
+"""MatVIX v2 public package."""
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"

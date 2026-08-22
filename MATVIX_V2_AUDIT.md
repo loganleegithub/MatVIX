@@ -5,7 +5,7 @@
 > 基线提交：`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`
 > 历史范围：`2013-05-20` 至 `2026-08-20`，3,334 个正式 session
 > 审计日期：2026-08-22
-> 状态：PHASE_A_COMPLETE / PHASE_B_SPEC_FROZEN / NO_SEMANTIC_CODE_CHANGED
+> 状态：PHASE_A_COMPLETE / PHASE_B_SPEC_FROZEN / PHASE_C_DEFECTS_CLOSED
 
 ## 1. 结论先行
 
@@ -21,7 +21,7 @@ V1 仍有五项阻断 V2 的业务缺陷：
 | `TENOR-001` | P1 | TENOR | V1 没有直接发布 F4–F7 level/slope/breadth/change，`Persistence` 不能回答中期限当前处于扩散、已计价还是衰减 | CLOSED |
 | `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | CLOSED |
 | `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | CLOSED |
-| `PROBABILITY-001` | P1 | PROBABILITY | 概率流水线完整，但现有 broad/repair 标签不是直接 F4–F7 扩散与 carry 恢复问题，两个模型也未提供可发布增量 | SPEC_FROZEN |
+| `PROBABILITY-001` | P1 | PROBABILITY | 概率流水线完整，但现有 broad/repair 标签不是直接 F4–F7 扩散与 carry 恢复问题，两个模型也未提供可发布增量 | CLOSED |
 
 本审计没有读取任何产品价格，没有生成收益、仓位、策略、HTML、V1.1 路径，也没有读取
 `/Users/logan/MatVIX_cleanup_quarantine/`。旧 Research Shadow 数字没有作为预期答案或证据。
@@ -282,10 +282,11 @@ reproduction command: .venv/bin/python -m matvix audit-v2 --project-dir .
 causal evidence: broad 模型 ECE=9.89% 仅 BASE_RATE_ONLY；fast repair Brier Skill=-3.70%、ECE=10.08%；直接候选 cohort 显示 accel/recovery 两窗样本充足，而 diffusion/persistence 确认窗不足252。
 business consequence: Dashboard 的历史参考率可能被误解为当前特征增量，也缺少真正中期限和 carry 恢复概率问题。
 minimal repair: 保留通过且业务问题清楚的 acute/front-inversion；仅从已冻结直接事实选择最小新事件，逐项写 onset/horizon/future predicate/censoring/predictors；样本或校准不足则 REJECT 或 BASE_RATE_ONLY。
-affected existing files: src/matvix/constants.py; src/matvix/probability/targets.py; src/matvix/probability/walk_forward.py; src/matvix/probability/engine.py; configs/probability_v1.yaml; output/schema/tests。
+affected existing files: src/matvix/constants.py; src/matvix/probability/targets.py; src/matvix/probability/walk_forward.py; src/matvix/probability/engine.py; configs/probability_v2.yaml; output/schema/tests。
 semantic/version impact: probability/schema/model 语义升为 2.0.0；正式事件集合整体替换，不保留 V1/V2 并行开关。
 station acceptance criterion: 标签/eligibility/purge/OOF/校准算术可重放；CENSORED 保持严格；FEATURE_CONDITIONAL 继续要求 Brier Skill>=2%、ECE<=7%及样本门；未达标新事件不留半成品字段。
-status: SPEC_FROZEN
+closure evidence: 正式事件集合已整体替换为 acute/front-inversion/mid-acceleration/broad-persistence/carry-recovery 五项；旧 broad-20d、fast-repair 与 probability_v1 配置在可执行代码、Schema、输出和既有 Dashboard 中均为零引用。3,334 行正式历史形成 16,670 条 event ledger，event/onset/horizon/null-label 均可重算、零重复 key、9,046 条完成标签；五项 cohort 均超过 252 且满足 30/30 Logistic class 门。OOF 的 purge、outcome availability、顺序 Platt 与概率算术零违规。最新 252 条验证中 acute/front/mid-acceleration 的 Brier Skill/ECE 分别为 7.31%/5.19%、9.55%/3.77%、14.31%/5.65%，获准 `CALIBRATED_MODEL`；broad 仅 191 条完成 calibrated OOF，carry 为 -6.67%/21.73%，两者在最近 eligible session 均诚实回退 `BASE_RATE_ONLY`，不计作概率增量。2026-08-20 正式 snapshot 的五事件 publication 全部与独立重算一致，`accept-real` 13/13 通过；阈值与 V1 概率算法均未放宽。
+status: CLOSED
 ```
 
 ## 5. 非缺陷与明确拒绝
@@ -303,8 +304,9 @@ status: SPEC_FROZEN
 在 `MATVIX_PRE_DEVELOPMENT_REPORT.md` 冻结 V2 数据、公式、answer/phase/UNKNOWN、事件、Schema
 与版本 delta，并以纯文档提交结束阶段 B。该提交之前，不得修改运行配置或任何业务语义代码；
 阶段 B 已完成：V2 数据、公式、answer/phase/UNKNOWN、事件、Schema 与版本 delta 已在
-`MATVIX_PRE_DEVELOPMENT_REPORT.md` 第 21 节冻结。下一步只允许从 `DATA-001` 开始，按固定顺序
-逐 defect 施工；每个 defect 在实现、聚焦测试、完整站内回归和证据更新完成前不得标记 CLOSED。
+`MATVIX_PRE_DEVELOPMENT_REPORT.md` 第 21 节冻结。阶段 C 已按 DATA-001、TENOR-001、STATE-001、
+TIMING-001、PROBABILITY-001 顺序逐项关闭；下一步只能进入阶段 D 完整气象站自身验收，阶段 D
+关键门通过前仍不得读取产品价格或创建经济探针模块。
 
 ## 7. 反过度设计熔断后的 scope-to-defect 重映射
 
@@ -333,3 +335,8 @@ status: SPEC_FROZEN
 `TIMING-001` 提交前复核：该 defect 为 34 additions / 74 deletions，累计为 2,035 additions /
 312 deletions；新增跟踪文件仍为 3。新增行只绑定 acute release 常量、配置契约和聚焦测试，
 同时删除通用 candidate hysteresis 与正式 candidate 输出，符合上述重映射裁决。
+
+`PROBABILITY-001` 提交前复核：该 defect 为 183 Python additions / 145 deletions，累计为 2,214
+additions / 453 deletions；新增跟踪文件仍为 3，`probability_v2.yaml` 是删除 V1 路径后的就地
+版本替换。新增行只绑定五事件标签、predictors、Schema/publication 算术、校准完整性与聚焦测试；
+没有新增模块、版本分支或可调策略参数，继续符合 `PROCEED_WITH_EXISTING_SCOPE` 裁决。

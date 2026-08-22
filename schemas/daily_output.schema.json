@@ -34,7 +34,7 @@
       "const": "2.0.0"
     },
     "probability_version": {
-      "const": "1.1.0"
+      "const": "2.0.0"
     },
     "input_manifest_hash": {
       "type": "string",
@@ -64,8 +64,9 @@
       "required": [
         "acute_front_stress_5d",
         "front_inversion_5d",
-        "broad_persistent_stress_20d",
-        "fast_repair_5d"
+        "mid_curve_pressure_accelerates_5d",
+        "broad_stress_persists_10d",
+        "carry_environment_recovers_10d"
       ],
       "properties": {
         "acute_front_stress_5d": {
@@ -74,10 +75,13 @@
         "front_inversion_5d": {
           "$ref": "#/$defs/event"
         },
-        "broad_persistent_stress_20d": {
+        "mid_curve_pressure_accelerates_5d": {
           "$ref": "#/$defs/event"
         },
-        "fast_repair_5d": {
+        "broad_stress_persists_10d": {
+          "$ref": "#/$defs/event"
+        },
+        "carry_environment_recovers_10d": {
           "$ref": "#/$defs/event"
         }
       }
@@ -814,7 +818,7 @@
                   }
                 }
               },
-              "broad_persistent_stress_20d": {
+              "mid_curve_pressure_accelerates_5d": {
                 "type": "object",
                 "properties": {
                   "event_status": {
@@ -840,7 +844,33 @@
                   }
                 }
               },
-              "fast_repair_5d": {
+              "broad_stress_persists_10d": {
+                "type": "object",
+                "properties": {
+                  "event_status": {
+                    "const": "UNOBSERVABLE"
+                  },
+                  "model_status": {
+                    "const": "NOT_RUN"
+                  },
+                  "probability_kind": {
+                    "const": null
+                  },
+                  "probability": {
+                    "const": null
+                  },
+                  "base_rate": {
+                    "const": null
+                  },
+                  "uplift": {
+                    "const": null
+                  },
+                  "valid_through_session": {
+                    "const": null
+                  }
+                }
+              },
+              "carry_environment_recovers_10d": {
                 "type": "object",
                 "properties": {
                   "event_status": {
@@ -1005,7 +1035,7 @@
                   }
                 }
               },
-              "broad_persistent_stress_20d": {
+              "mid_curve_pressure_accelerates_5d": {
                 "type": "object",
                 "properties": {
                   "event_status": {
@@ -1031,7 +1061,33 @@
                   }
                 }
               },
-              "fast_repair_5d": {
+              "broad_stress_persists_10d": {
+                "type": "object",
+                "properties": {
+                  "event_status": {
+                    "const": "UNOBSERVABLE"
+                  },
+                  "model_status": {
+                    "const": "NOT_RUN"
+                  },
+                  "probability_kind": {
+                    "const": null
+                  },
+                  "probability": {
+                    "const": null
+                  },
+                  "base_rate": {
+                    "const": null
+                  },
+                  "uplift": {
+                    "const": null
+                  },
+                  "valid_through_session": {
+                    "const": null
+                  }
+                }
+              },
+              "carry_environment_recovers_10d": {
                 "type": "object",
                 "properties": {
                   "event_status": {
@@ -1185,12 +1241,6 @@
                 "const": null
               },
               "hard_acute": {
-                "const": null
-              },
-              "persistent_day": {
-                "const": null
-              },
-              "persistent_now": {
                 "const": null
               },
               "recent_stress": {

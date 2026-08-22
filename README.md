@@ -7,7 +7,7 @@ monthly VX curve, VVIX, SKEW and SPX into:
 - five transparent state axes: Carry Risk, Shock, Tail Price, Persistence and
   Repair;
 - one deterministic market phase and a trader-readable evidence narrative;
-- four event-specific 5/20-session probability questions with explicit
+- five event-specific 5/10-session probability questions with explicit
   eligibility, historical base rate, walk-forward OOF model status and
   calibration evidence.
 
@@ -26,10 +26,10 @@ python3.12 -m venv .venv
 .venv/bin/python -m pytest
 ```
 
-Probability version `1.1.0` starts the regularized Logistic OOF after 252
+Probability version `2.0.0` starts the regularized Logistic OOF after 252
 completed event-specific samples, while retaining the 30/30 class minimum,
 20-session purge and the separate 252-sample calibrated publication gate.
-This makes all four real-data events testable; it does not make an
+This makes all five real-data events testable; it does not make an
 underperforming model publishable.
 
 `scikit-learn==1.7.2` is part of the probability contract.  A different

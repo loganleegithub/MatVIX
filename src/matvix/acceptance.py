@@ -707,6 +707,21 @@ def _completed_calibrated_validation(
     return complete, {**metrics, "completed_calibrated_available": len(completed)}
 
 
+def _calibration_integrity_passes(
+    event_evidence: dict[str, dict[str, Any]], violations: list[str]
+) -> bool:
+    """Separate replay integrity from whether a feature model earns publication."""
+
+    return (
+        not violations
+        and set(event_evidence) == set(EVENT_ORDER)
+        and all(
+            evidence["raw_oof"] > 0 and evidence["calibrated_oof"] > 0
+            for evidence in event_evidence.values()
+        )
+    )
+
+
 def _audit_sequential_calibration(
     oof: pd.DataFrame,
     snapshot_session: pd.Timestamp,
@@ -757,13 +772,7 @@ def _audit_sequential_calibration(
             "validation_complete": validation_complete,
             "validation": validation,
         }
-    all_validated = all(
-        evidence["raw_oof"] > 0
-        and evidence["calibrated_oof"] > 0
-        and evidence["validation_complete"]
-        for evidence in event_evidence.values()
-    )
-    return not violations and all_validated, {
+    return _calibration_integrity_passes(event_evidence, violations), {
         "events": event_evidence,
         "violations": len(violations),
         "first_violations": violations[:10],
@@ -1003,7 +1012,7 @@ def build_real_acceptance_report(
             )
             cohort_evidence[event] = evidence
             cohort_passed &= bool(evidence["base_rate_ready"])
-    gates.append(_gate("four_event_target_cohorts", cohort_passed, events=cohort_evidence))
+    gates.append(_gate("five_event_target_cohorts", cohort_passed, events=cohort_evidence))
 
     oof_passed = False
     normalized_oof = oof.copy()
@@ -1030,7 +1039,7 @@ def build_real_acceptance_report(
         calibration_evidence = {"error": "OOF boundary gate failed"}
     gates.append(
         _gate(
-            "four_event_oof_calibration_validation",
+            "five_event_oof_calibration_integrity",
             calibration_passed,
             **calibration_evidence,
         )
@@ -1053,7 +1062,7 @@ def build_real_acceptance_report(
     gates.append(_gate("probability_publication_truth", publication_passed, **publication_evidence))
 
     return {
-        "acceptance_version": "1.1.0",
+        "acceptance_version": "2.0.0",
         "passed": all(gate["passed"] for gate in gates),
         "session_date": snapshot.get("session_date"),
         "data_range": {

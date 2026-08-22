@@ -52,7 +52,7 @@ def test_raw_to_state_history_and_snapshot_schema() -> None:
         "mid_curve_pressure_state",
         "carry_environment_state",
     }
-    assert len(payload["probability_judgment"]) == 4
+    assert len(payload["probability_judgment"]) == 5
     assert payload["observations"]["vx_contract_ids"]
     # On sandbox sklearn mismatch, formal probability correctly falls back or remains insufficient.
     assert all(
@@ -149,7 +149,7 @@ def test_dashboard_score_probability_separation_and_order() -> None:
         html.index("现在：五个状态答案与五个分数"),
         html.index("期限结构"),
         html.index("证据与改变条件"),
-        html.index("接下来：四类状态转移概率"),
+        html.index("接下来：五类状态转移概率"),
         html.index("1 / 5 / 20 日变化"),
         html.index("十五项原始指标与完整诊断"),
     ]

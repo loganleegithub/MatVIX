@@ -11,6 +11,7 @@ from matvix.acceptance import (
     _audit_oof_training_boundaries,
     _audit_real_observations,
     _audit_real_vx,
+    _calibration_integrity_passes,
     _completed_calibrated_validation,
     _platt_row_is_arithmetically_valid,
     build_real_acceptance_report,
@@ -197,7 +198,7 @@ def test_validation_requires_252_completed_calibrated_oof_but_may_reject_model()
     dates = pd.bdate_range("2023-01-02", periods=252)
     frame = pd.DataFrame(
         {
-            "event_id": "fast_repair_5d",
+            "event_id": "carry_environment_recovers_10d",
             "prediction_date": dates,
             "outcome_available_at": pd.to_datetime(dates, utc=True),
             "label_status": ["OBSERVED_1" if i % 5 == 0 else "OBSERVED_0" for i in range(252)],
@@ -209,10 +210,10 @@ def test_validation_requires_252_completed_calibrated_oof_but_may_reject_model()
     snapshot_date = pd.Timestamp("2025-01-02")
 
     incomplete, incomplete_evidence = _completed_calibrated_validation(
-        frame.iloc[:-1], "fast_repair_5d", snapshot_date
+        frame.iloc[:-1], "carry_environment_recovers_10d", snapshot_date
     )
     complete, complete_evidence = _completed_calibrated_validation(
-        frame, "fast_repair_5d", snapshot_date
+        frame, "carry_environment_recovers_10d", snapshot_date
     )
 
     assert incomplete is False
@@ -220,6 +221,21 @@ def test_validation_requires_252_completed_calibrated_oof_but_may_reject_model()
     assert complete is True
     assert complete_evidence["samples"] == 252
     assert complete_evidence["accepted"] is False
+
+
+def test_calibration_integrity_does_not_require_model_publication_acceptance() -> None:
+    events = {
+        event: {
+            "raw_oof": 300,
+            "calibrated_oof": 100,
+            "validation_complete": False,
+        }
+        for event in EVENT_ORDER
+    }
+
+    assert _calibration_integrity_passes(events, []) is True
+    events["broad_stress_persists_10d"]["calibrated_oof"] = 0
+    assert _calibration_integrity_passes(events, []) is False
 
 
 def test_platt_probability_must_equal_sigmoid_of_persisted_parameters() -> None:

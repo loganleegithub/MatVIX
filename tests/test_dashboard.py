@@ -83,13 +83,14 @@ def _snapshot() -> dict[str, Any]:
             "narrative": "风险升温与结构缓冲并存。",
         },
         "probability_judgment": {
-            "fast_repair_5d": {
+            "carry_environment_recovers_10d": {
                 **_event(None, None, model_status="NOT_RUN", event_status="NOT_APPLICABLE"),
                 "probability_kind": None,
             },
-            "broad_persistent_stress_20d": _event(
+            "broad_stress_persists_10d": _event(
                 0.109, 0.109, model_status="BASE_RATE_ONLY"
             ),
+            "mid_curve_pressure_accelerates_5d": _event(0.210, 0.180),
             "front_inversion_5d": _event(0.040, 0.100),
             "acute_front_stress_5d": _event(0.118, 0.127),
         },
@@ -134,18 +135,18 @@ def test_trader_dashboard_explains_state_and_probability_qualification() -> None
     assert "仅历史频率 · 不是当前信号" in dashboard
     event_positions = [dashboard.index(f'data-event="{event}"') for event in EVENT_ORDER]
     assert event_positions == sorted(event_positions)
-    assert dashboard.count("data-summary-event=") == 3
+    assert dashboard.count("data-summary-event=") == 5
     assert "不适用 / 状态已存在" in dashboard
-    repair_marker = dashboard.index('data-event="fast_repair_5d"')
-    repair_card = dashboard[repair_marker : repair_marker + 900]
-    assert "不适用 / 状态已存在" in repair_card
-    assert '<div class="probability">0.0%</div>' not in repair_card
+    carry_marker = dashboard.index('data-event="carry_environment_recovers_10d"')
+    carry_card = dashboard[carry_marker : carry_marker + 900]
+    assert "不适用 / 状态已存在" in carry_card
+    assert '<div class="probability">0.0%</div>' not in carry_card
 
 
 def test_trader_dashboard_exposes_interaction_and_http_polling_hooks() -> None:
     dashboard = _rendered()
 
-    assert 'data-dashboard-version="trader-v1"' in dashboard
+    assert 'data-dashboard-version="trader-v2"' in dashboard
     assert 'id="runtime-status"' in dashboard
     assert 'data-status-endpoint="/api/status"' in dashboard
     assert 'data-open-panel="conflict-panel"' in dashboard
@@ -258,12 +259,12 @@ def test_triad_uses_axis_specific_components_when_global_evidence_is_truncated()
 
 def test_base_rate_only_summary_does_not_become_a_feature_signal() -> None:
     snapshot = deepcopy(_snapshot())
-    event = snapshot["probability_judgment"]["broad_persistent_stress_20d"]
+    event = snapshot["probability_judgment"]["broad_stress_persists_10d"]
     assert event["probability"] == event["base_rate"]
 
     dashboard = render_dashboard(snapshot)
 
-    marker = dashboard.index('data-summary-event="broad_persistent_stress_20d"')
+    marker = dashboard.index('data-summary-event="broad_stress_persists_10d"')
     card = dashboard[marker : marker + 900]
     assert "10.9%" in card
     assert "仅历史频率 · 不是当前信号" in card

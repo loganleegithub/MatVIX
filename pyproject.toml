@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "matvix"
-version = "1.1.0"
+version = "2.0.0"
 description = "Transparent, point-in-time VIX market narrative and calibrated transition probability engine"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

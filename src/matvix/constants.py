@@ -6,7 +6,7 @@ SCHEMA_VERSION = "2.0.0"
 MODEL_ID = "MATVIX_CBOE_CORE_V2"
 FEATURE_VERSION = "2.0.0"
 STATE_VERSION = "2.0.0"
-PROBABILITY_VERSION = "1.1.0"
+PROBABILITY_VERSION = "2.0.0"
 
 
 class VintageKind(StrEnum):
@@ -31,8 +31,9 @@ VINTAGE_RANK = {
 EVENT_HORIZONS = {
     "acute_front_stress_5d": 5,
     "front_inversion_5d": 5,
-    "broad_persistent_stress_20d": 20,
-    "fast_repair_5d": 5,
+    "mid_curve_pressure_accelerates_5d": 5,
+    "broad_stress_persists_10d": 10,
+    "carry_environment_recovers_10d": 10,
 }
 EVENT_ORDER = tuple(EVENT_HORIZONS)
 
@@ -51,20 +52,28 @@ LOGISTIC_FEATURES = {
         "p_neg_basis30_eod",
         "shock_scaled",
     ],
-    "broad_persistent_stress_20d": [
-        "persistence_scaled",
+    "mid_curve_pressure_accelerates_5d": [
+        "p_f4_f7_level",
+        "p_d5_log_f4_f7_level",
+        "p_neg_d5_f4_f7_slope30",
+        "f4_f7_inversion_share",
         "shock_scaled",
-        "tail_price_scaled",
-        "p_d5_fvol_30_93",
-        "p_fvol_93_184",
         "score_change5_scaled",
     ],
-    "fast_repair_5d": [
-        "repair_scaled",
-        "inverse_score_change5_scaled",
-        "p_neg_d5_near_stress",
-        "p_d5_front_slope30",
+    "broad_stress_persists_10d": [
+        "p_f4_f7_level",
+        "p_neg_f4_f7_slope30",
+        "f4_f7_inversion_share",
+        "p_d5_log_f4_f7_level",
         "shock_scaled",
-        "persistence_scaled",
+        "score_change5_scaled",
+    ],
+    "carry_environment_recovers_10d": [
+        "repair_scaled",
+        "p_d5_front_slope30",
+        "p_neg_d5_near_stress",
+        "p_d5_f4_f7_slope30",
+        "p_neg_d5_log_f4_f7_level",
+        "shock_scaled",
     ],
 }

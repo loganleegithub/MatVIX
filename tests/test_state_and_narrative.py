@@ -29,15 +29,15 @@ def test_three_valued_logic() -> None:
     assert at_least_k_true([True, False, False, False, None], 3) is False
 
 
-def test_persistent_now_window_includes_today_and_missing_is_not_false() -> None:
+def test_broad_pressure_now_window_includes_today_and_missing_is_not_false() -> None:
     frame = base_state_frame(6)
     frame.loc[[1, 3, 5], ["p_f4_f7_level", "near_stress_log_ratio"]] = [0.80, 0.10]
     frame.loc[2, "p_f4_f7_level"] = np.nan
     out = add_state_predicates_and_answers(frame)
     # Final t-4...t is TRUE, UNKNOWN, TRUE, FALSE, TRUE.
-    assert out.iloc[-1]["persistent_now"] is True
+    assert out.iloc[-1]["broad_pressure_now"] is True
     # Earlier padded window with only two TRUE cannot be forced either way.
-    assert out.iloc[3]["persistent_now"] is None
+    assert out.iloc[3]["broad_pressure_now"] is None
 
 
 def test_recent_stress_window_includes_today() -> None:

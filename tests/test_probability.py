@@ -43,13 +43,20 @@ def test_observable_then_onset_priority() -> None:
     assert event_status(row, "acute_front_stress_5d") == "ELIGIBLE"
 
 
-def test_event_onsets_for_all_four_targets() -> None:
+def test_event_onsets_for_all_five_targets() -> None:
     frame = base_state_frame(1)
-    row = frame.iloc[0]
+    row = frame.iloc[0].copy()
     assert event_status(row, "acute_front_stress_5d") == "ELIGIBLE"
     assert event_status(row, "front_inversion_5d") == "ELIGIBLE"
-    assert event_status(row, "broad_persistent_stress_20d") == "ELIGIBLE"
-    assert event_status(row, "fast_repair_5d") == "NOT_APPLICABLE"
+    assert event_status(row, "mid_curve_pressure_accelerates_5d") == "ELIGIBLE"
+    assert event_status(row, "broad_stress_persists_10d") == "NOT_APPLICABLE"
+    assert event_status(row, "carry_environment_recovers_10d") == "NOT_APPLICABLE"
+
+    row["broad_pressure_day"] = True
+    assert event_status(row, "broad_stress_persists_10d") == "ELIGIBLE"
+
+    row["front_pressure"] = True
+    assert event_status(row, "carry_environment_recovers_10d") == "ELIGIBLE"
 
 
 def test_acute_label_boundary_and_full_horizon() -> None:
@@ -84,33 +91,44 @@ def test_front_inversion_label_and_current_inversion_not_applicable() -> None:
     assert inverted.label_status == "NOT_APPLICABLE"
 
 
-def test_broad_persistent_20d_uses_any_five_day_three_true_window() -> None:
-    frame = base_state_frame(25)
-    frame.loc[[7, 10, 13], "persistent_day"] = True
+def test_mid_curve_acceleration_uses_future_rising_state() -> None:
+    frame = base_state_frame(7)
+    frame.loc[3, "mid_curve_pressure_state"] = "RISING"
     ledger = build_target_ledger(frame)
     row = ledger[
-        (ledger.event_id == "broad_persistent_stress_20d")
+        (ledger.event_id == "mid_curve_pressure_accelerates_5d")
         & (ledger.prediction_date == frame.loc[0, "session_date"])
     ].iloc[0]
-    # 7,10,13 do not all fit one 5-session window.
-    assert row.label == 0
-    frame.loc[[7, 8, 10], "persistent_day"] = True
-    ledger2 = build_target_ledger(frame)
-    row2 = ledger2[
-        (ledger2.event_id == "broad_persistent_stress_20d")
-        & (ledger2.prediction_date == frame.loc[0, "session_date"])
-    ].iloc[0]
-    assert row2.label == 1
+    assert row.label == 1
 
 
-def test_fast_repair_target_reuses_repair_confirmed() -> None:
-    frame = base_state_frame(7)
-    frame.loc[0, "baseline_score"] = 70
-    frame.loc[0, "phase"] = "PRESSURE_BUILDING"
-    frame.loc[4, "repair_confirmed"] = True
+def test_broad_persistence_requires_five_of_next_ten_sessions() -> None:
+    frame = base_state_frame(12)
+    frame.loc[0, "broad_pressure_day"] = True
+    frame.loc[[1, 3, 5, 7], "broad_pressure_day"] = True
     ledger = build_target_ledger(frame)
     row = ledger[
-        (ledger.event_id == "fast_repair_5d")
+        (ledger.event_id == "broad_stress_persists_10d")
+        & (ledger.prediction_date == frame.loc[0, "session_date"])
+    ].iloc[0]
+    assert row.label == 0
+
+    frame.loc[9, "broad_pressure_day"] = True
+    ledger = build_target_ledger(frame)
+    row = ledger[
+        (ledger.event_id == "broad_stress_persists_10d")
+        & (ledger.prediction_date == frame.loc[0, "session_date"])
+    ].iloc[0]
+    assert row.label == 1
+
+
+def test_carry_recovery_uses_future_open_state() -> None:
+    frame = base_state_frame(12)
+    frame.loc[0, "front_pressure"] = True
+    frame.loc[6, "carry_environment_state"] = "OPEN"
+    ledger = build_target_ledger(frame)
+    row = ledger[
+        (ledger.event_id == "carry_environment_recovers_10d")
         & (ledger.prediction_date == frame.loc[0, "session_date"])
     ].iloc[0]
     assert row.label == 1
@@ -160,22 +178,17 @@ def test_unrelated_future_partial_status_does_not_censor_event_predicate() -> No
     ("event", "predicate_flag"),
     [
         ("acute_front_stress_5d", "hard_acute_formal_vintage_eligible"),
-        (
-            "broad_persistent_stress_20d",
-            "persistent_day_formal_vintage_eligible",
-        ),
-        ("fast_repair_5d", "repair_confirmed_formal_vintage_eligible"),
+        ("mid_curve_pressure_accelerates_5d", "mid_curve_formal_vintage_eligible"),
+        ("broad_stress_persists_10d", "broad_pressure_day_formal_vintage_eligible"),
+        ("carry_environment_recovers_10d", "carry_environment_formal_vintage_eligible"),
     ],
 )
 def test_unrelated_future_gap_does_not_censor_other_event_predicates(
     event: str, predicate_flag: str
 ) -> None:
     frame = base_state_frame(25)
-    frame.loc[0, ["baseline_score", "phase", "repair_answer"]] = [
-        70.0,
-        "PRESSURE_BUILDING",
-        "INACTIVE",
-    ]
+    frame.loc[0, "broad_pressure_day"] = True
+    frame.loc[0, "front_pressure"] = True
     frame.loc[3, "data_status"] = "PARTIAL"
     frame.loc[3, "formal_vintage_eligible"] = False
     frame[predicate_flag] = True
@@ -371,12 +384,10 @@ def _artifact_state(n: int) -> pd.DataFrame:
     index = np.arange(n)
     frame["hard_acute"] = index % 13 == 0
     frame["front_slope30"] = np.where(index % 11 == 0, -0.01, 0.03)
-    frame["persistent_now"] = False
-    frame["persistent_day"] = index % 10 <= 2
-    frame["baseline_score"] = 70.0
-    frame["phase"] = "PRESSURE_BUILDING"
-    frame["repair_answer"] = "INACTIVE"
-    frame["repair_confirmed"] = index % 9 == 0
+    frame["mid_curve_pressure_state"] = np.where(index % 9 == 0, "RISING", "QUIET")
+    frame["broad_pressure_day"] = index % 10 <= 2
+    frame["front_pressure"] = index % 8 == 0
+    frame["carry_environment_state"] = np.where(index % 9 == 0, "OPEN", "CLOSED")
     for offset, feature in enumerate(
         dict.fromkeys(value for features in LOGISTIC_FEATURES.values() for value in features)
     ):
@@ -673,7 +684,7 @@ def test_daily_output_rejects_probability_arithmetic_mismatch() -> None:
 def test_outlook_base_rate_only_and_not_applicable() -> None:
     events = {event: _event("NOT_APPLICABLE", "NOT_RUN") for event in EVENT_ORDER}
     assert outlook_answer("OK", events) == "NOT_APPLICABLE"
-    events["fast_repair_5d"] = _event(
+    events["carry_environment_recovers_10d"] = _event(
         "ELIGIBLE", "BASE_RATE_ONLY", 0.2, 0.2, 0.0, "HISTORICAL_REFERENCE", "2025-01-10"
     )
     assert outlook_answer("OK", events) == "BASE_RATE_ONLY"

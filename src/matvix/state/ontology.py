@@ -194,9 +194,6 @@ def add_state_predicates_and_answers(frame: pd.DataFrame) -> pd.DataFrame:
     result["broad_pressure_day"] = pd.Series(broad_days, dtype="object")
     result["broad_pressure_now"] = pd.Series(broad_now, dtype="object")
     result["recent_stress"] = pd.Series(recent_stress, dtype="object")
-    # These two internal names are removed with the V1 probability event set in PROBABILITY-001.
-    result["persistent_day"] = result["broad_pressure_day"]
-    result["persistent_now"] = result["broad_pressure_now"]
     result["repair_confirmed"] = pd.Series(
         [None if value == "UNKNOWN" else value == "RECEDING" for value in mid_states],
         dtype="object",
@@ -211,9 +208,6 @@ def add_state_predicates_and_answers(frame: pd.DataFrame) -> pd.DataFrame:
         .astype(bool)
     )
     result["hard_acute_formal_vintage_eligible"] = formal_chain & result["hard_acute"].notna()
-    result["persistent_day_formal_vintage_eligible"] = (
-        formal_chain & result["persistent_day"].notna()
-    )
     result["mid_curve_formal_vintage_eligible"] = formal_chain & result[
         "mid_curve_pressure_state"
     ].ne("UNKNOWN")

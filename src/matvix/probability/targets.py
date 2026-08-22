@@ -24,21 +24,27 @@ def _event_onset(row: pd.Series, event: str) -> Tri:
     if event == "front_inversion_5d":
         value = row.get("front_slope30")
         return None if value is None or pd.isna(value) else float(value) >= 0.0
-    if event == "broad_persistent_stress_20d":
-        persistent = _known_bool(row.get("persistent_now"))
-        return None if persistent is None else not persistent
-    if event == "fast_repair_5d":
-        answer = row.get("repair_answer")
-        baseline = row.get("baseline_score")
-        phase = row.get("phase")
-        if answer in (None, "UNKNOWN") or baseline is None or pd.isna(baseline) or phase is None:
+    if event == "mid_curve_pressure_accelerates_5d":
+        state = row.get("mid_curve_pressure_state")
+        if state in (None, "UNKNOWN") or pd.isna(state):
             return None
-        pressure = float(baseline) >= 65.0 or phase in {
-            "PRESSURE_BUILDING",
-            "ACUTE_FRONT_STRESS",
-            "BROAD_PERSISTENT_STRESS",
-        }
-        return answer != "CONFIRMED" and pressure
+        return str(state) in {"QUIET", "RECEDING"}
+    if event == "broad_stress_persists_10d":
+        return _known_bool(row.get("broad_pressure_day"))
+    if event == "carry_environment_recovers_10d":
+        carry = row.get("carry_environment_state")
+        if carry in (None, "UNKNOWN") or pd.isna(carry):
+            return None
+        if carry not in {"CLOSED", "RECOVERING"}:
+            return False
+        front = _known_bool(row.get("front_pressure"))
+        mid = row.get("mid_curve_pressure_state")
+        mid_pressure = None if mid in (None, "UNKNOWN") or pd.isna(mid) else mid != "QUIET"
+        if front is True or mid_pressure is True:
+            return True
+        if front is False and mid_pressure is False:
+            return False
+        return None
     raise KeyError(event)
 
 
@@ -78,10 +84,14 @@ def _future_predicate(row: pd.Series, event: str) -> Tri:
     if event == "front_inversion_5d":
         value = row.get("front_slope30")
         return None if value is None or pd.isna(value) else float(value) < 0.0
-    if event == "broad_persistent_stress_20d":
-        return _known_bool(row.get("persistent_day"))
-    if event == "fast_repair_5d":
-        return _known_bool(row.get("repair_confirmed"))
+    if event == "mid_curve_pressure_accelerates_5d":
+        state = row.get("mid_curve_pressure_state")
+        return None if state in (None, "UNKNOWN") or pd.isna(state) else state == "RISING"
+    if event == "broad_stress_persists_10d":
+        return _known_bool(row.get("broad_pressure_day"))
+    if event == "carry_environment_recovers_10d":
+        state = row.get("carry_environment_state")
+        return None if state in (None, "UNKNOWN") or pd.isna(state) else state == "OPEN"
     raise KeyError(event)
 
 
@@ -97,8 +107,9 @@ def _future_predicate_vintage_eligible(row: pd.Series, event: str) -> bool:
     predicate_flags = {
         "acute_front_stress_5d": "hard_acute_formal_vintage_eligible",
         "front_inversion_5d": "front_curve_formal_vintage_eligible",
-        "broad_persistent_stress_20d": "persistent_day_formal_vintage_eligible",
-        "fast_repair_5d": "repair_confirmed_formal_vintage_eligible",
+        "mid_curve_pressure_accelerates_5d": "mid_curve_formal_vintage_eligible",
+        "broad_stress_persists_10d": "broad_pressure_day_formal_vintage_eligible",
+        "carry_environment_recovers_10d": "carry_environment_formal_vintage_eligible",
     }
     flag = predicate_flags[event]
     if flag in row.index:
@@ -163,9 +174,8 @@ def build_target_ledger(frame: pd.DataFrame) -> pd.DataFrame:
             if not complete:
                 records.append(record)
                 continue
-            if event == "broad_persistent_stress_20d":
-                bools = [bool(value) for value in predicates]
-                observed = any(sum(bools[start : start + 5]) >= 3 for start in range(16))
+            if event == "broad_stress_persists_10d":
+                observed = sum(bool(value) for value in predicates) >= 5
             else:
                 observed = any(bool(value) for value in predicates)
             final_session = pd.Timestamp(future.iloc[-1]["session_date"]).normalize()

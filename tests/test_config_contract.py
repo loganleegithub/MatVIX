@@ -51,7 +51,7 @@ def test_checked_in_release_config_is_bound_to_runtime_semantics() -> None:
         "source_manifest.yaml": "1.0.0",
         "features_v2.yaml": "2.0.0",
         "state_v2.yaml": "2.0.0",
-        "probability_v1.yaml": "1.1.0",
+        "probability_v2.yaml": "2.0.0",
     }
     assert report.config_bundle_digest.startswith("sha256:")
 
@@ -69,7 +69,7 @@ def test_yaml_comment_and_format_changes_do_not_change_contract(tmp_path: Path) 
 
 def test_config_value_change_without_versioned_release_is_rejected(tmp_path: Path) -> None:
     root = _copy_release_configs(tmp_path)
-    probability_path = root / "configs" / "probability_v1.yaml"
+    probability_path = root / "configs" / "probability_v2.yaml"
     probability_path.write_text(
         probability_path.read_text(encoding="utf-8").replace(
             "min_training_samples: 252", "min_training_samples: 253"
@@ -77,7 +77,7 @@ def test_config_value_change_without_versioned_release_is_rejected(tmp_path: Pat
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigContractError, match="probability_v1.yaml: semantic digest"):
+    with pytest.raises(ConfigContractError, match="probability_v2.yaml: semantic digest"):
         validate_frozen_config(root)
 
 

@@ -41,10 +41,10 @@ _FROZEN = {
         "2.0.0",
         "04dc52355a41b0cf4ffdb061d04962714e159dbb82a7d80d9a7d5196342be766",
     ),
-    "probability_v1.yaml": (
+    "probability_v2.yaml": (
         "version",
-        "1.1.0",
-        "673d4bfad11d6ce6ee7905277de3ffb469ab5c1323966f617fa83282f569ec44",
+        "2.0.0",
+        "015a57d11a5868aaac78f875d275d2d86ed39770d154bfc73531217f3df9f535",
     ),
 }
 
@@ -347,7 +347,7 @@ def validate_frozen_config(project_dir: str | Path) -> ConfigContractReport:
     if not errors:
         _feature_contract(loaded["features_v2.yaml"], errors)
         _state_contract(loaded["state_v2.yaml"], errors)
-        _probability_contract(loaded["probability_v1.yaml"], errors)
+        _probability_contract(loaded["probability_v2.yaml"], errors)
     if errors:
         raise ConfigContractError(
             "MatVIX frozen configuration contract mismatch; an explicit versioned release "

@@ -12,20 +12,23 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from matvix.constants import EVENT_ORDER
 from matvix.state.scores import component_contributions
 from matvix.storage import read_json
 
 EVENT_LABELS = {
     "acute_front_stress_5d": "5日内急性前端压力",
     "front_inversion_5d": "5日内前端倒挂",
-    "broad_persistent_stress_20d": "20日内广泛持续压力",
-    "fast_repair_5d": "5日内快速修复",
+    "mid_curve_pressure_accelerates_5d": "5日内中期限压力加速",
+    "broad_stress_persists_10d": "10日内广泛压力持续",
+    "carry_environment_recovers_10d": "10日内 Carry 环境修复",
 }
 EVENT_DEFINITIONS = {
     "acute_front_stress_5d": "未来5个交易日内是否出现 hard_acute",
     "front_inversion_5d": "未来5个交易日内是否出现 FrontSlope30<0",
-    "broad_persistent_stress_20d": "未来20日内是否有任意5日窗口至少3日持续压力",
-    "fast_repair_5d": "未来5个交易日内是否出现 repair_confirmed",
+    "mid_curve_pressure_accelerates_5d": "未来5个交易日内中期限压力是否进入 RISING",
+    "broad_stress_persists_10d": "未来10个交易日内是否至少5日出现 broad pressure",
+    "carry_environment_recovers_10d": "未来10个交易日内 Carry 环境是否进入 OPEN",
 }
 SCORE_LABELS = {
     "carry_risk": "CarryRisk",
@@ -107,12 +110,6 @@ ANSWER_LABELS = {
         "UNKNOWN": "暂不可判",
     },
 }
-EVENT_ORDER = (
-    "acute_front_stress_5d",
-    "front_inversion_5d",
-    "broad_persistent_stress_20d",
-    "fast_repair_5d",
-)
 PRESSURE_LABELS = {
     "LOW": "低压",
     "WATCH": "观察态",
@@ -1217,10 +1214,7 @@ def render_dashboard(
         )
     probability_cards = "".join(probability_cards_parts)
 
-    summary_event_ids = list(EVENT_ORDER[:3])
-    repair_event = probabilities.get("fast_repair_5d")
-    if repair_event and repair_event.get("event_status") != "NOT_APPLICABLE":
-        summary_event_ids.append("fast_repair_5d")
+    summary_event_ids = list(EVENT_ORDER)
     summary_parts: list[str] = []
     for event_id in summary_event_ids:
         event = probabilities.get(event_id)
@@ -1332,7 +1326,7 @@ def render_dashboard(
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MatVIX {html.escape(snapshot["session_date"])}</title>
 <style>{DASHBOARD_STYLES}</style></head>
-<body data-status-endpoint="/api/status" data-session-date="{html.escape(str(snapshot['session_date']))}" data-dashboard-version="trader-v1">
+<body data-status-endpoint="/api/status" data-session-date="{html.escape(str(snapshot['session_date']))}" data-dashboard-version="trader-v2">
 <header class="topbar">
   <div class="brand">MatVIX · 期权气象站</div>
   <div class="freshness" id="runtime-status"><span class="dot{freshness_class}" aria-hidden="true"></span>
@@ -1416,7 +1410,7 @@ def render_dashboard(
       <section class="deep-section"><h2>现在：五个状态答案与五个分数</h2><div class="grid answers">{answer_cards}</div><div class="grid scores">{score_cards}</div></section>
       <section class="deep-section"><h2>期限结构</h2><div class="grid curves"><div class="box">{iv_chart}</div><div class="box">{vx_chart}</div></div></section>
       <section class="deep-section"><h2>证据与改变条件</h2><p class="box">{html.escape(str(story.get('narrative', '')))}</p></section>
-      <section class="deep-section"><h2>接下来：四类状态转移概率</h2><div class="grid probs">{probability_cards}</div></section>
+      <section class="deep-section"><h2>接下来：五类状态转移概率</h2><div class="grid probs">{probability_cards}</div></section>
       <section class="deep-section"><h2>1 / 5 / 20 日变化</h2>{changes}</section>
       <section class="deep-section"><h2>历史状态路径</h2><div class="box">{history_chart}</div></section>
       <section class="deep-section"><h2>历史概率路径</h2>{probability_history_chart}</section>
