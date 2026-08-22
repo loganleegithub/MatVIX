@@ -111,6 +111,10 @@ DIAGNOSTIC_FIELDS = [
     "persistent_now",
     "recent_stress",
     "repair_confirmed",
+    "front_pressure",
+    "broad_pressure_day",
+    "broad_pressure_now",
+    "carry_open_day",
     "feature_vintage_kind",
     "feature_methodology_signature",
     "pit_evidence",
@@ -119,6 +123,9 @@ DIAGNOSTIC_FIELDS = [
     "hard_acute_formal_vintage_eligible",
     "persistent_day_formal_vintage_eligible",
     "repair_confirmed_formal_vintage_eligible",
+    "mid_curve_formal_vintage_eligible",
+    "broad_pressure_day_formal_vintage_eligible",
+    "carry_environment_formal_vintage_eligible",
 ]
 
 
@@ -226,6 +233,15 @@ def build_daily_output(
             "baseline_score": (
                 _json_value(row.get("baseline_score")) if data_status == "OK" else None
             ),
+            "structure": {
+                "stress_tenor_scope": str(row.get("stress_tenor_scope", "UNKNOWN")),
+                "mid_curve_pressure_state": str(
+                    row.get("mid_curve_pressure_state", "UNKNOWN")
+                ),
+                "carry_environment_state": str(
+                    row.get("carry_environment_state", "UNKNOWN")
+                ),
+            },
             "answers": {
                 "carry": str(row.get("carry_answer", "UNKNOWN")),
                 "shock": str(row.get("shock_answer", "UNKNOWN")),

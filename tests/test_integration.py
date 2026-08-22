@@ -47,6 +47,11 @@ def test_raw_to_state_history_and_snapshot_schema() -> None:
     validate_daily_output(payload)
     assert payload["session_date"] == pd.Timestamp(session).date().isoformat()
     assert len(payload["market_story"]["scores"]) == 5
+    assert set(payload["market_story"]["structure"]) == {
+        "stress_tenor_scope",
+        "mid_curve_pressure_state",
+        "carry_environment_state",
+    }
     assert len(payload["probability_judgment"]) == 4
     assert payload["observations"]["vx_contract_ids"]
     # On sandbox sklearn mismatch, formal probability correctly falls back or remains insufficient.

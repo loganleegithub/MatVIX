@@ -186,6 +186,7 @@
         "pressure_level",
         "direction",
         "baseline_score",
+        "structure",
         "answers",
         "scores",
         "drivers",
@@ -205,8 +206,8 @@
             "ACUTE_FRONT_STRESS",
             "REPAIR_IN_PROGRESS",
             "BROAD_PERSISTENT_STRESS",
-            "CALENDAR_LOCALIZED_PREMIUM",
-            "PRESSURE_BUILDING",
+            "PRESSURE_DIFFUSING",
+            "FRONT_LOCALIZED_STRESS",
             "TAIL_RICH_QUIET_CURVE",
             "CARRY_SUPPORTIVE_LOW_STRESS",
             "MIXED_TRANSITION"
@@ -242,6 +243,26 @@
         },
         "baseline_score": {
           "$ref": "#/$defs/score"
+        },
+        "structure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stress_tenor_scope",
+            "mid_curve_pressure_state",
+            "carry_environment_state"
+          ],
+          "properties": {
+            "stress_tenor_scope": {
+              "enum": ["NONE", "FRONT", "MID", "BROAD", "UNKNOWN"]
+            },
+            "mid_curve_pressure_state": {
+              "enum": ["QUIET", "RISING", "PRICED", "RECEDING", "UNKNOWN"]
+            },
+            "carry_environment_state": {
+              "enum": ["OPEN", "CLOSED", "RECOVERING", "UNKNOWN"]
+            }
+          }
         },
         "answers": {
           "type": "object",

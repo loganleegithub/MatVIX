@@ -32,12 +32,11 @@ baseline_weights:
 thresholds:
   hard_acute_score: 85.0
   hard_acute_confirmations: 2
-  persistent_score: 75.0
-  persistent_baseline: 65.0
-  persistent_window: 5
-  persistent_required: 3
+  mid_priced_percentile: 0.75
+  mid_priced_inversion_share: 0.6666666666666666
+  mid_prior_priced_window: 10
+  broad_pressure_window: 5
+  broad_pressure_required: 3
   recent_stress_window: 10
-  stress_baseline: 70.0
   repair_building: 60.0
-  repair_confirmed: 70.0
   direction_change: 7.5

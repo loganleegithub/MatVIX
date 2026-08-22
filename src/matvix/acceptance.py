@@ -67,11 +67,16 @@ PHASE_VALUES = {
     "ACUTE_FRONT_STRESS",
     "REPAIR_IN_PROGRESS",
     "BROAD_PERSISTENT_STRESS",
-    "CALENDAR_LOCALIZED_PREMIUM",
-    "PRESSURE_BUILDING",
+    "PRESSURE_DIFFUSING",
+    "FRONT_LOCALIZED_STRESS",
     "TAIL_RICH_QUIET_CURVE",
     "CARRY_SUPPORTIVE_LOW_STRESS",
     "MIXED_TRANSITION",
+}
+STRUCTURE_VALUES = {
+    "stress_tenor_scope": {"NONE", "FRONT", "MID", "BROAD"},
+    "mid_curve_pressure_state": {"QUIET", "RISING", "PRICED", "RECEDING"},
+    "carry_environment_state": {"OPEN", "CLOSED", "RECOVERING"},
 }
 TARGET_COLUMNS = {
     "event_id",
@@ -207,6 +212,7 @@ def _row_is_complete_state(row: pd.Series) -> bool:
         for column in SCORE_COLUMNS
     )
     answers = all(str(row.get(column)) in ANSWER_VALUES[column] for column in ANSWER_COLUMNS)
+    structure = all(str(row.get(column)) in values for column, values in STRUCTURE_VALUES.items())
     signature = row.get("feature_methodology_signature")
     signature_known = signature is not None and not pd.isna(signature) and bool(str(signature))
     return (
@@ -216,6 +222,7 @@ def _row_is_complete_state(row: pd.Series) -> bool:
         and signature_known
         and scores
         and answers
+        and structure
         and str(row.get("phase")) in PHASE_VALUES
         and _row_has_complete_curve(row)
     )
@@ -388,6 +395,9 @@ def _snapshot_matches_state(snapshot: dict[str, Any], latest: pd.Series) -> tupl
     for public, state_column in answer_map.items():
         if str(story.get("answers", {}).get(public)) != str(latest.get(state_column)):
             differences.append(f"answers.{public}")
+    for field in STRUCTURE_VALUES:
+        if str(story.get("structure", {}).get(field)) != str(latest.get(field)):
+            differences.append(f"structure.{field}")
     for field in ("vx_contract_ids", "vx_settles", "vx_days_to_final"):
         actual = _as_sequence(observations.get(field))
         expected = _as_sequence(latest.get(field))
@@ -930,6 +940,9 @@ def build_real_acceptance_report(
                 state_violations.append(f"{_date(series.get('session_date'))}:{column}")
         for column in ANSWER_COLUMNS:
             if str(series.get(column)) not in ANSWER_VALUES[column]:
+                state_violations.append(f"{_date(series.get('session_date'))}:{column}")
+        for column, values in STRUCTURE_VALUES.items():
+            if str(series.get(column)) not in values:
                 state_violations.append(f"{_date(series.get('session_date'))}:{column}")
         if str(series.get("phase")) not in PHASE_VALUES:
             state_violations.append(f"{_date(series.get('session_date'))}:phase")

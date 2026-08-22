@@ -12,8 +12,8 @@ PHASE_HEADLINES = {
     "ACUTE_FRONT_STRESS": "前端保险市场进入急性压力。",
     "REPAIR_IN_PROGRESS": "高压后的修复阶段仍在进行。",
     "BROAD_PERSISTENT_STRESS": "压力已扩散并形成持续性高压。",
-    "CALENDAR_LOCALIZED_PREMIUM": "保险溢价集中在已知日历窗口附近。",
-    "PRESSURE_BUILDING": "保险市场压力正在累积。",
+    "PRESSURE_DIFFUSING": "前端压力正在向 F4–F7 中期限扩散。",
+    "FRONT_LOCALIZED_STRESS": "保险压力仍主要集中在前端期限。",
     "TAIL_RICH_QUIET_CURVE": "表面曲线平静，但下行尾部风险中性定价偏贵。",
     "CARRY_SUPPORTIVE_LOW_STRESS": "前端 carry 条件健康，短端压力较低。",
     "MIXED_TRANSITION": "市场证据分化，处于过渡状态。",
@@ -21,7 +21,7 @@ PHASE_HEADLINES = {
 
 AXIS_SENTENCES = {
     "carry": {
-        "SUPPORTIVE": "前端曲线与基差仍支持 carry 环境。",
+        "SUPPORTIVE": "前端、基差与 F4–F7 曲线已连续确认 carry 环境开放。",
         "MIXED": "前端曲线与基差给出混合信号，carry 条件并不清晰。",
         "STRESSED": "前端 carry 结构正在受损，承担波动率卖方风险的环境变差。",
         "INVERTED": "前端 VIX 期货已经倒挂，carry 环境明显受损。",
@@ -44,7 +44,7 @@ AXIS_SENTENCES = {
     "persistence": {
         "NORMAL": "中长期期限尚未显示压力扩散。",
         "FRONT_LOCALIZED": "压力主要集中在前端，尚未确认向中期限扩散。",
-        "DIFFUSING": "中期限 forward volatility 正在上升，压力出现扩散证据。",
+        "DIFFUSING": "F4–F7 价格上升且曲线恶化，压力出现直接扩散证据。",
         "PERSISTENT": "中期限压力已连续维持，当前更接近持续性高压环境。",
         "MIXED": "期限广度证据相互冲突，暂不能归为局部或持续扩散。",
         "UNKNOWN": "当前无法形成完整的期限广度判断。",
@@ -52,7 +52,7 @@ AXIS_SENTENCES = {
     "repair": {
         "INACTIVE": "当前没有足够的同步修复证据。",
         "BUILDING": "多项边际修复信号正在形成，但尚未完成确认。",
-        "CONFIRMED": "多项边际修复证据占优，但这不代表绝对风险已经回到低位。",
+        "CONFIRMED": "F4–F7 压力正在边际衰减，但这不代表 carry 环境已经开放。",
         "UNKNOWN": "当前无法形成完整的修复判断。",
     },
 }
@@ -60,13 +60,13 @@ AXIS_SENTENCES = {
 CHANGES = {
     "UNKNOWN": ["data_status=OK 后按历史前态顺序重算"],
     "ACUTE_FRONT_STRESS": ["hard_acute=false 且 Shock<75 连续两日"],
-    "REPAIR_IN_PROGRESS": ["hard_acute=true", "Repair<60 连续两日"],
-    "BROAD_PERSISTENT_STRESS": ["persistent_now=false", "repair_answer=CONFIRMED"],
-    "CALENDAR_LOCALIZED_PREMIUM": ["事件窗口结束", "NearStress<=0", "Persistence>=55"],
-    "PRESSURE_BUILDING": ["Shock<55 且 FrontSlope30>0 连续两日"],
+    "REPAIR_IN_PROGRESS": ["mid_curve_pressure_state!=RECEDING", "hard_acute=true"],
+    "BROAD_PERSISTENT_STRESS": ["broad_pressure_now=false", "hard_acute=true"],
+    "PRESSURE_DIFFUSING": ["stress_tenor_scope!=BROAD", "mid_curve_pressure_state!=RISING"],
+    "FRONT_LOCALIZED_STRESS": ["stress_tenor_scope!=FRONT", "hard_acute=true"],
     "TAIL_RICH_QUIET_CURVE": ["TailPrice<70", "Shock>=65", "Persistence>=55"],
     "CARRY_SUPPORTIVE_LOW_STRESS": ["FrontSlope30<0", "Shock>=65"],
-    "MIXED_TRANSITION": ["任一非 mixed 的 raw phase 连续两日成立"],
+    "MIXED_TRANSITION": ["任一直接期限事实形成确定的新 phase"],
 }
 
 

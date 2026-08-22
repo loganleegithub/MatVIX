@@ -39,7 +39,7 @@ _FROZEN = {
     "state_v2.yaml": (
         "version",
         "2.0.0",
-        "bd215c3e61cfb93ec25752fcb2cc444e5851aea104be6af1d3fb8e4d3c2e8188",
+        "733047b19a65b96c6ee13e8bd723931ae3d6a0f341bccaa1914e55e1fa7a5f1d",
     ),
     "probability_v1.yaml": (
         "version",
@@ -204,7 +204,15 @@ _WEIGHT_KEYS = {
 
 def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
     from matvix.constants import STATE_VERSION
-    from matvix.state.ontology import add_state_predicates_and_answers
+    from matvix.state.ontology import (
+        BROAD_PRESSURE_REQUIRED,
+        BROAD_PRESSURE_WINDOW,
+        MID_PRICED_INVERSION_SHARE,
+        MID_PRICED_PERCENTILE,
+        MID_PRIOR_PRICED_WINDOW,
+        RECENT_STRESS_WINDOW,
+        REPAIR_BUILDING_SCORE,
+    )
     from matvix.state.scores import (
         AXIS_BASELINE_WEIGHTS,
         AXIS_COMPONENTS,
@@ -222,28 +230,26 @@ def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
         config["baseline_weights"],
     )
     t = config["thresholds"]
-    score, ontology = _facts(add_percentiles_and_scores), _facts(add_state_predicates_and_answers)
+    score = _facts(add_percentiles_and_scores)
     expected = [
         (score, ("shock_score", "GtE", float(t["hard_acute_score"])), 1),
         (score, ("front_confirmation_count", "GtE", float(t["hard_acute_confirmations"])), 1),
         (score, ("d5_baseline_score", "GtE", float(t["direction_change"])), 1),
         (score, ("d5_baseline_score", "LtE", -float(t["direction_change"])), 1),
-        (ontology, ("persistence_score", ">=", float(t["persistent_score"])), 1),
-        (ontology, ("baseline_score", ">=", float(t["persistent_baseline"])), 1),
-        (ontology, ("baseline_score", ">=", float(t["stress_baseline"])), 1),
-        (ontology, ("repair_score", ">=", float(t["repair_confirmed"])), 2),
-        (ontology, ("repair_score", ">=", float(t["repair_building"])), 1),
     ]
     if any(facts[fact] != count for facts, fact, count in expected):
         errors.append("state.thresholds: executable comparisons differ from config")
-    source = inspect.getsource(add_state_predicates_and_answers)
-    windows = (
-        f"at_least_k_true(p_window, {t['persistent_required']})",
-        f"index - {t['persistent_window'] - 1}",
-        f"index - {t['recent_stress_window'] - 1}",
-    )
-    if any(fragment not in source for fragment in windows):
-        errors.append("state.thresholds: window semantics differ from config")
+    bindings = {
+        "mid_priced_percentile": MID_PRICED_PERCENTILE,
+        "mid_priced_inversion_share": MID_PRICED_INVERSION_SHARE,
+        "mid_prior_priced_window": MID_PRIOR_PRICED_WINDOW,
+        "broad_pressure_window": BROAD_PRESSURE_WINDOW,
+        "broad_pressure_required": BROAD_PRESSURE_REQUIRED,
+        "recent_stress_window": RECENT_STRESS_WINDOW,
+        "repair_building": REPAIR_BUILDING_SCORE,
+    }
+    for name, runtime_value in bindings.items():
+        _same(errors, f"state.thresholds.{name}", runtime_value, t[name])
 
 
 def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:

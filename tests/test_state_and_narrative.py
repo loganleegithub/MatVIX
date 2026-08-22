@@ -31,26 +31,29 @@ def test_three_valued_logic() -> None:
 
 def test_persistent_now_window_includes_today_and_missing_is_not_false() -> None:
     frame = base_state_frame(6)
-    frame["persistence_score"] = [10, 80, np.nan, 80, 10, 80]
-    frame["baseline_score"] = [10, 70, 70, 70, 10, 70]
+    frame.loc[[1, 3, 5], ["p_f4_f7_level", "near_stress_log_ratio"]] = [0.80, 0.10]
+    frame.loc[2, "p_f4_f7_level"] = np.nan
     out = add_state_predicates_and_answers(frame)
-    # On final date t-4...t has true, unknown, true, false, true => true (3 known TRUE).
+    # Final t-4...t is TRUE, UNKNOWN, TRUE, FALSE, TRUE.
     assert out.iloc[-1]["persistent_now"] is True
-    # Earlier window with only two TRUE and one UNKNOWN cannot be forced to false.
+    # Earlier padded window with only two TRUE cannot be forced either way.
     assert out.iloc[3]["persistent_now"] is None
 
 
 def test_recent_stress_window_includes_today() -> None:
     frame = base_state_frame(10)
-    frame["baseline_score"] = 20.0
-    frame.loc[9, "baseline_score"] = 75.0
+    frame.loc[9, "near_stress_log_ratio"] = 0.10
     out = add_state_predicates_and_answers(frame)
     assert out.iloc[9]["recent_stress"] is True
 
 
 def test_acute_and_front_localized_are_orthogonal_axes() -> None:
     frame = base_state_frame(10)
-    frame.loc[9, ["shock_score", "front_confirmation_count", "persistence_score"]] = [90, 2, 40]
+    frame.loc[9, ["shock_score", "front_confirmation_count", "near_stress_log_ratio"]] = [
+        90,
+        2,
+        0.10,
+    ]
     frame.loc[9, "hard_acute"] = True
     out = add_state_predicates_and_answers(frame)
     assert out.iloc[9]["shock_answer"] == "ACUTE"
@@ -60,22 +63,44 @@ def test_acute_and_front_localized_are_orthogonal_axes() -> None:
 
 def test_persistent_and_repair_can_coexist() -> None:
     frame = base_state_frame(12)
-    frame.loc[7:11, ["persistence_score", "baseline_score"]] = [80, 75]
-    frame.loc[10:11, "repair_score"] = 80
-    frame.loc[10, "shock_score"] = 70
-    frame.loc[11, "shock_score"] = 60
-    frame.loc[11, "p_d5_fvol_30_93"] = 0.4
-    frame.loc[11, "hard_acute"] = False
+    frame.loc[7:11, ["p_f4_f7_level", "near_stress_log_ratio"]] = [0.80, 0.10]
+    frame.loc[11, ["d5_log_f4_f7_level", "d5_f4_f7_slope30"]] = [-0.03, 0.01]
     out = add_state_predicates_and_answers(frame)
     assert out.iloc[-1]["persistence_answer"] == "PERSISTENT"
     assert out.iloc[-1]["repair_answer"] == "CONFIRMED"
-    assert out.iloc[-1]["raw_phase"] == "REPAIR_IN_PROGRESS"
+    assert out.iloc[-1]["raw_phase"] == "BROAD_PERSISTENT_STRESS"
+
+
+def test_direct_tenor_states_and_two_day_carry_confirmation() -> None:
+    frame = base_state_frame(6)
+    frame.loc[1, ["p_f4_f7_level", "near_stress_log_ratio"]] = [0.80, 0.10]
+    frame.loc[2, ["d5_log_f4_f7_level", "d5_f4_f7_slope30", "near_stress_log_ratio"]] = [
+        0.03,
+        -0.01,
+        0.10,
+    ]
+    frame.loc[3, ["d5_log_f4_f7_level", "d5_f4_f7_slope30"]] = [-0.03, 0.01]
+
+    out = add_state_predicates_and_answers(frame)
+
+    assert out.loc[1, ["mid_curve_pressure_state", "stress_tenor_scope"]].tolist() == [
+        "PRICED",
+        "BROAD",
+    ]
+    assert out.loc[2, ["mid_curve_pressure_state", "stress_tenor_scope"]].tolist() == [
+        "RISING",
+        "BROAD",
+    ]
+    assert out.loc[3, "mid_curve_pressure_state"] == "RECEDING"
+    assert out.loc[4, "carry_environment_state"] == "RECOVERING"
+    assert out.loc[5, "carry_environment_state"] == "OPEN"
+    assert out.loc[5, "carry_answer"] == "SUPPORTIVE"
 
 
 def test_phase_priority_hard_acute_over_repair() -> None:
     frame = base_state_frame(12)
-    frame.loc[10:11, "repair_score"] = 80
-    frame.loc[10, "shock_score"] = 70
+    frame.loc[10, "p_f4_f7_level"] = 0.80
+    frame.loc[11, ["d5_log_f4_f7_level", "d5_f4_f7_slope30"]] = [-0.03, 0.01]
     frame.loc[11, "shock_score"] = 90
     frame.loc[11, "front_confirmation_count"] = 2
     frame.loc[11, "hard_acute"] = True
@@ -132,10 +157,7 @@ def test_acute_exit_streak_counts_release_condition_not_raw_phase_identity() -> 
 
 def test_repair_below_building_threshold_is_inactive_despite_unknown_recent_stress() -> None:
     frame = base_state_frame(10)
-    frame["baseline_score"] = 20.0
-    frame["hard_acute"] = pd.Series([False] * len(frame), dtype="object")
-    frame.loc[0, "baseline_score"] = np.nan
-    frame.loc[0, "hard_acute"] = None
+    frame.loc[0, "near_stress_log_ratio"] = np.nan
     frame.loc[9, "repair_score"] = 59.0
     out = add_state_predicates_and_answers(frame)
     assert out.loc[9, "recent_stress"] is None
@@ -229,7 +251,7 @@ def test_structural_triggers_only_computed_facts() -> None:
 
 def test_narrative_traceability_and_no_structured_mutation() -> None:
     row = base_state_frame(1).iloc[0].copy()
-    row["phase"] = "PRESSURE_BUILDING"
+    row["phase"] = "PRESSURE_DIFFUSING"
     row["carry_answer"] = "STRESSED"
     row["shock_answer"] = "HIGH"
     row["persistence_answer"] = "FRONT_LOCALIZED"
@@ -243,7 +265,7 @@ def test_narrative_traceability_and_no_structured_mutation() -> None:
         row, drivers=drivers, counter_evidence=counters, events=events, outlook="BASE_RATE_ONLY"
     )
     pd.testing.assert_series_equal(row, before)
-    assert "保险市场压力正在累积" in text
+    assert "前端压力正在向 F4–F7 中期限扩散" in text
     assert "当前仅有同类历史发生率" in text
     for driver in drivers:
         assert driver["meaning"] in text
