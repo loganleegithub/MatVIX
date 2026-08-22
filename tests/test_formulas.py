@@ -173,6 +173,23 @@ def test_legacy_curve_inversion_share_uses_first_six_but_requires_f1_f7(
     assert math.isnan(float(short["curve_inversion_share"]))
 
 
+def test_f4_f7_tenor_facts_have_frozen_units_and_direction(session: pd.Timestamp) -> None:
+    output = curve_features_for_session(
+        make_curve(
+            session,
+            settles=[20, 21, 22, 24, 23, 22, 21],
+            days=[10, 40, 70, 100, 130, 160, 190],
+        ),
+        session,
+    )
+
+    assert output["front_curve_level"] == pytest.approx(20.5)
+    assert output["f4_f7_level"] == pytest.approx(22.5)
+    assert output["f4_f7_slope30"] == pytest.approx(math.log(21 / 24) * 30 / 90)
+    assert output["f4_f7_inversion_share"] == 1.0
+    assert output["front_to_mid_log_ratio"] == pytest.approx(math.log(22.5 / 20.5))
+
+
 def test_ratio_crossings() -> None:
     assert ratio(20, 20) == 1.0
     assert log_ratio(20, 20) == 0.0

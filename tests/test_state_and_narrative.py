@@ -170,6 +170,7 @@ def test_percentile_history_isolated_by_feature_methodology_signature() -> None:
     frame["vix_close"] = 20.0
     frame["vxcm30"] = 21.0
     frame["curve_inversion_share"] = 0.0
+    frame["f4_f7_inversion_share"] = 0.0
 
     out = add_percentiles_and_scores(frame, reference_sessions=3, minimum_valid=2)
 
@@ -280,7 +281,7 @@ def test_narrative_includes_repair_evidence_and_structural_triggers() -> None:
 def test_dashboard_shows_repair_triggers_and_curve_breadth_as_ratio() -> None:
     row = base_state_frame(10).iloc[-1].copy()
     row["session_date"] = pd.Timestamp("2025-01-02")
-    row["curve_inversion_share"] = 0.8
+    row["f4_f7_inversion_share"] = 0.8
     row["p_neg_d5_log_vix"] = 0.92
     row["d5_log_vix"] = -0.12
     row["vix9d_close"] = 22.0
@@ -302,8 +303,8 @@ def test_dashboard_shows_repair_triggers_and_curve_breadth_as_ratio() -> None:
     dashboard = render_dashboard(payload)
     assert "修复证据" in dashboard and "VIX 五日边际回落" in dashboard
     assert "结构触发" in dashboard and "VIX9D 高于 VIX" in dashboard
-    assert "期限倒挂广度比例=80.0%" in dashboard
-    assert "curve_inversion_share · p=0.800" not in dashboard
+    assert "三个 F4–F7 相邻期限段中的倒挂占比为 80%" in dashboard
+    assert "f4_f7_inversion_share · p=0.800" not in dashboard
 
 
 def test_what_changes_has_one_to_three_items() -> None:

@@ -17,15 +17,15 @@ HIGH_MEANINGS = {
     "shock.vvix_level": "VIX 期权隐含波动率处于高位",
     "tail.skew_level": "下行尾部相对中心的风险中性定价更突出",
     "tail.skew_change_5d": "SKEW 五日变化偏强",
-    "persistence.fvol_30_93": "30–93 日 forward volatility 处于高位",
-    "persistence.fvol_93_184": "93–184 日 forward volatility 处于高位",
-    "persistence.fvol_change_5d": "中期限 forward volatility 正在扩散",
-    "persistence.curve_breadth": "VX 倒挂已覆盖更多连续期限段",
+    "persistence.f4_f7_level": "F4–F7 平均价格处于历史高位",
+    "persistence.f4_f7_slope30": "F4–F7 标准化斜率明显压平或倒挂",
+    "persistence.f4_f7_level_change_5d": "F4–F7 平均价格五日明显抬升",
+    "persistence.f4_f7_inversion_breadth": "F4–F7 倒挂覆盖更多相邻期限段",
     "repair.vix": "VIX 五日边际回落",
     "repair.near_stress": "VIX9D/VIX 前端压力回落",
     "repair.front_slope": "VX 前端曲线边际恢复",
     "repair.vvix": "vol-of-vol 边际回落",
-    "repair.fvol_30_93": "中期限 forward volatility 边际回落",
+    "repair.f4_f7_level": "F4–F7 平均价格五日边际回落",
 }
 
 LOW_MEANINGS = {
@@ -39,10 +39,10 @@ LOW_MEANINGS = {
     "shock.vvix_level": "VIX 期权隐含波动率尚未处于高位",
     "tail.skew_level": "下行尾部相对中心的风险中性定价并不突出",
     "tail.skew_change_5d": "SKEW 五日变化偏弱",
-    "persistence.fvol_30_93": "30–93 日 forward volatility 尚未抬升",
-    "persistence.fvol_93_184": "93–184 日 forward volatility 尚未抬升",
-    "persistence.fvol_change_5d": "中期限 forward volatility 尚未出现扩散",
-    "persistence.curve_breadth": "VX 倒挂未沿连续期限段扩散",
+    "persistence.f4_f7_level": "F4–F7 平均价格尚未处于高位",
+    "persistence.f4_f7_slope30": "F4–F7 标准化斜率仍较陡峭",
+    "persistence.f4_f7_level_change_5d": "F4–F7 平均价格五日未明显抬升",
+    "persistence.f4_f7_inversion_breadth": "F4–F7 倒挂未覆盖更多相邻期限段",
 }
 
 
@@ -55,11 +55,11 @@ def _evidence(record: dict[str, Any], *, high: bool) -> dict[str, Any]:
     percentile = record.get("percentile")
     evidence_id = str(record["id"])
     meaning = (HIGH_MEANINGS if high else LOW_MEANINGS)[evidence_id]
-    if evidence_id == "persistence.curve_breadth" and raw is not None and not pd.isna(raw):
-        # CurveInversionShare is already a normalized F1-F6 breadth ratio.  It
+    if evidence_id == "persistence.f4_f7_inversion_breadth" and raw is not None and not pd.isna(raw):
+        # F4F7InversionShare is already a normalized three-segment breadth ratio.  It
         # occupies the schema's common 0-1 evidence slot but is not a rolling
         # historical percentile.
-        meaning += f"（五个相邻期限段中的倒挂占比为 {_float_value(raw):.0%}）"
+        meaning += f"（三个 F4–F7 相邻期限段中的倒挂占比为 {_float_value(raw):.0%}）"
     return {
         "evidence_id": evidence_id,
         "feature": str(record["feature_refs"][0]),

@@ -89,6 +89,23 @@ def test_replay_is_deterministic_for_same_history() -> None:
     )
 
 
+def test_f4_f7_changes_are_session_based_and_replayable() -> None:
+    _, _, features, _ = _integration_history()
+    current = features.iloc[-1]
+    previous5 = features.iloc[-6]
+    previous10 = features.iloc[-11]
+
+    assert current["d5_log_f4_f7_level"] == pytest.approx(
+        np.log(current["f4_f7_level"] / previous5["f4_f7_level"])
+    )
+    assert current["d10_f4_f7_slope30"] == pytest.approx(
+        current["f4_f7_slope30"] - previous10["f4_f7_slope30"]
+    )
+    assert current["d10_f4_f7_inversion_share"] == pytest.approx(
+        current["f4_f7_inversion_share"] - previous10["f4_f7_inversion_share"]
+    )
+
+
 def test_future_raw_change_does_not_change_prior_snapshot() -> None:
     observations, vx, _, states = _integration_history()
     ok_dates = states.loc[states["data_status"] == "OK", "session_date"]

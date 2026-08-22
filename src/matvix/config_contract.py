@@ -36,10 +36,10 @@ _FROZEN = {
         "2.0.0",
         "f209980fcc7be6c31b5400e790d478b57c43e7fe9b47b1a5af8cd76927a0bd91",
     ),
-    "state_v1.yaml": (
+    "state_v2.yaml": (
         "version",
-        "1.0.0",
-        "323157700580106d051553d16ea4e31c32255c958f42eccd2bee3b08aa91aa95",
+        "2.0.0",
+        "bd215c3e61cfb93ec25752fcb2cc444e5851aea104be6af1d3fb8e4d3c2e8188",
     ),
     "probability_v1.yaml": (
         "version",
@@ -187,17 +187,17 @@ _WEIGHT_KEYS = {
     "shock": ("near_stress", "d1_log_vix", "d5_log_vix", "d5_log_vvix", "vvix"),
     "tail_price": ("skew", "d5_skew"),
     "persistence": (
-        "fvol_30_93",
-        "fvol_93_184",
-        "d5_fvol_30_93",
-        "curve_inversion_share",
+        "f4_f7_level",
+        "f4_f7_slope30",
+        "d5_log_f4_f7_level",
+        "f4_f7_inversion_share",
     ),
     "repair": (
         "d5_log_vix",
         "d5_near_stress",
         "d5_front_slope30",
         "d5_log_vvix",
-        "d5_fvol_30_93",
+        "d5_log_f4_f7_level",
     ),
 }
 
@@ -337,7 +337,7 @@ def validate_frozen_config(project_dir: str | Path) -> ConfigContractReport:
             errors.append(f"{name}.{version_field}: expected {version!r}")
     if not errors:
         _feature_contract(loaded["features_v2.yaml"], errors)
-        _state_contract(loaded["state_v1.yaml"], errors)
+        _state_contract(loaded["state_v2.yaml"], errors)
         _probability_contract(loaded["probability_v1.yaml"], errors)
     if errors:
         raise ConfigContractError(

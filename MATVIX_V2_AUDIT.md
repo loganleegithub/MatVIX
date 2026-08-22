@@ -18,7 +18,7 @@ V1 仍有五项阻断 V2 的业务缺陷：
 | defect_id | severity | layer | 一句话结论 | status |
 |---|---|---|---|---|
 | `DATA-001` | P0 | DATA | 严格 30 日 `VXCM30` 在完整 F1–F7 仍可得时周期性失去左夹逼锚；162 个直接缺口令 324 个 5 日变化不可用，另有 5 个合法 warm-up null | CLOSED |
-| `TENOR-001` | P1 | TENOR | V1 没有直接发布 F4–F7 level/slope/breadth/change，`Persistence` 不能回答中期限当前处于扩散、已计价还是衰减 | SPEC_FROZEN |
+| `TENOR-001` | P1 | TENOR | V1 没有直接发布 F4–F7 level/slope/breadth/change，`Persistence` 不能回答中期限当前处于扩散、已计价还是衰减 | CLOSED |
 | `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | SPEC_FROZEN |
 | `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | SPEC_FROZEN |
 | `PROBABILITY-001` | P1 | PROBABILITY | 概率流水线完整，但现有 broad/repair 标签不是直接 F4–F7 扩散与 carry 恢复问题，两个模型也未提供可发布增量 | SPEC_FROZEN |
@@ -230,7 +230,8 @@ minimal repair: 增加最小 F4–F7 level、30-day normalized slope、inversion
 affected existing files: src/matvix/features/futures_curve.py; src/matvix/features/builder.py; src/matvix/state/scores.py; configs/features_v1.yaml; configs/state_v1.yaml; output/schema/tests。
 semantic/version impact: feature/state/schema/model 语义升为 2.0.0；删除被替代的旧 Persistence 混合含义，不保留双实现。
 station acceptance criterion: 新字段公式、单位、换月、缺失、PIT 可重放；四种期限阶段有不同 F4–F7 事实；开发/确认条件方向不系统反转；危机留一方向稳定或诚实拒绝该字段。
-status: SPEC_FROZEN
+closure evidence: 正式 3,334 行的 F4–F7 level/slope/inversion breadth/front-to-mid ratio 均可用，公式、单位、F1–F7 完整性、5/10-session 变化和方法分段均有测试；直接候选计数为 DIFFUSING=206、PRICED=322、RECEDING=601、FRONT_LOCALIZED=144。开发/确认样本分别为 DIFFUSING 106/100、PRICED 206/116、RECEDING 369/232；前两类 d5/d10 level 中位数均为正且 slope-change 均为负，RECEDING 恰好相反；98/96/160 个相应事件簇的 leave-one-cluster-out 当前方向均稳定。Persistence 与 Repair 轴已改为冻结 F4–F7 事实；212 项测试、Ruff、Mypy、正式全历史重建及 13 个现有验收门通过。
+status: CLOSED
 ```
 
 ### STATE-001

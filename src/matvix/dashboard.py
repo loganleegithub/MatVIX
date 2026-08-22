@@ -158,6 +158,11 @@ FEATURE_SHORT_LABELS = {
     "fvol_93_184": "远期限波动",
     "d5_fvol_30_93": "期限扩散",
     "curve_inversion_share": "倒挂广度",
+    "f4_f7_level": "F4–F7 水平",
+    "f4_f7_slope30": "F4–F7 斜率",
+    "f4_f7_inversion_share": "F4–F7 倒挂广度",
+    "d5_log_f4_f7_level": "F4–F7 五日变化",
+    "d5_f4_f7_slope30": "F4–F7 五日斜率变化",
 }
 
 LIVE_STATUS_SCRIPT = """
@@ -874,9 +879,9 @@ def _decision_label(value: Any) -> str:
 def _evidence_html(items: list[dict[str, Any]]) -> str:
     rows: list[str] = []
     for item in items:
-        if item["evidence_id"] == "persistence.curve_breadth":
+        if item["evidence_id"] == "persistence.f4_f7_inversion_breadth":
             ratio = item["raw_value"] if item["raw_value"] is not None else item["percentile"]
-            detail = f"{item['feature']} · 期限倒挂广度比例={float(ratio):.1%}"
+            detail = f"{item['feature']} · F4–F7 倒挂广度比例={float(ratio):.1%}"
         else:
             detail = f"{item['feature']} · 历史方向分位={float(item['percentile']):.3f}"
         rows.append(

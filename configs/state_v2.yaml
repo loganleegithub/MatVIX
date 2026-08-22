@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "2.0.0"
 weights:
   carry_risk:
     front_slope30: 0.45
@@ -14,16 +14,16 @@ weights:
     skew: 0.70
     d5_skew: 0.30
   persistence:
-    fvol_30_93: 0.40
-    fvol_93_184: 0.30
-    d5_fvol_30_93: 0.20
-    curve_inversion_share: 0.10
+    f4_f7_level: 0.40
+    f4_f7_slope30: 0.30
+    d5_log_f4_f7_level: 0.20
+    f4_f7_inversion_share: 0.10
   repair:
     d5_log_vix: 0.30
     d5_near_stress: 0.25
     d5_front_slope30: 0.20
     d5_log_vvix: 0.15
-    d5_fvol_30_93: 0.10
+    d5_log_f4_f7_level: 0.10
 baseline_weights:
   carry_risk: 0.30
   shock: 0.30

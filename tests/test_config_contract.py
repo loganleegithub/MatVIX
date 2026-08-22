@@ -50,7 +50,7 @@ def test_checked_in_release_config_is_bound_to_runtime_semantics() -> None:
     assert report.versions == {
         "source_manifest.yaml": "1.0.0",
         "features_v2.yaml": "2.0.0",
-        "state_v1.yaml": "1.0.0",
+        "state_v2.yaml": "2.0.0",
         "probability_v1.yaml": "1.1.0",
     }
     assert report.config_bundle_digest.startswith("sha256:")

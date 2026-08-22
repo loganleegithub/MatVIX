@@ -93,6 +93,11 @@ def curve_features_for_session(
         "ts12": np.nan,
         "ts12_log_ratio": np.nan,
         "front_slope30": np.nan,
+        "front_curve_level": np.nan,
+        "f4_f7_level": np.nan,
+        "f4_f7_slope30": np.nan,
+        "f4_f7_inversion_share": np.nan,
+        "front_to_mid_log_ratio": np.nan,
         "vxcm30": np.nan,
         "vxcm30_source_kind": "UNAVAILABLE",
         "vxcm30_methodology": None,
@@ -147,6 +152,17 @@ def curve_features_for_session(
         output["ts12_log_ratio"] = float(np.log(ratio))
         output["front_slope30"] = float(np.log(ratio) * 30.0 / (days[1] - days[0]))
     if formal:
+        front_level = float(np.mean(settlements[:2]))
+        mid_level = float(np.mean(settlements[3:7]))
+        output["front_curve_level"] = front_level
+        output["f4_f7_level"] = mid_level
+        output["f4_f7_slope30"] = float(
+            np.log(settlements[6] / settlements[3]) * 30.0 / (days[6] - days[3])
+        )
+        output["f4_f7_inversion_share"] = float(
+            np.count_nonzero(settlements[3:6] > settlements[4:7]) / 3.0
+        )
+        output["front_to_mid_log_ratio"] = float(np.log(mid_level / front_level))
         for index in range(len(curve) - 1):
             left_days, right_days = days[index], days[index + 1]
             if left_days <= VXCM30_TARGET_DAYS < right_days:

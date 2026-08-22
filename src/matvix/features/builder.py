@@ -103,6 +103,12 @@ def _add_regime_bound_features(frame: pd.DataFrame) -> pd.DataFrame:
         "d5_skew": ("level", "skew_close", 5),
         "d5_fvol_30_93": ("level", "fvol_30_93", 5),
         "d5_fvol_93_184": ("level", "fvol_93_184", 5),
+        "d5_log_f4_f7_level": ("log", "f4_f7_level", 5),
+        "d5_f4_f7_slope30": ("level", "f4_f7_slope30", 5),
+        "d5_f4_f7_inversion_share": ("level", "f4_f7_inversion_share", 5),
+        "d10_log_f4_f7_level": ("log", "f4_f7_level", 10),
+        "d10_f4_f7_slope30": ("level", "f4_f7_slope30", 10),
+        "d10_f4_f7_inversion_share": ("level", "f4_f7_inversion_share", 10),
     }
     changes = pd.DataFrame(np.nan, index=frame.index, columns=change_columns, dtype=float)
 
