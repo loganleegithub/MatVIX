@@ -7,8 +7,9 @@
 > V2 代码基线：`a2a8a584f6435d7ffc972eb57b0928eeb0e4a802`
 > 原合同提交：`b1394e7aa87de3e37648ed6fd61e47a33cf22df8`
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
-> v1.2 修订提交：`docs(v3): authorize bounded carry saturation repair`
-> 当前裁决：`PROB-CARRY-SATURATION-003_SPEC_FROZEN / IMPLEMENTATION_AUTHORIZED_ONCE`
+> v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
+> 当前裁决：`PROB-CARRY-SATURATION-003=PASS / HISTORICAL_RESEARCH_SUPPORT`
+> 下一项：`PROB-FRAGILITY-002=NEXT_AUTHORIZED`
 > 最高允许结论：`NO_STAGE_D_PASS_YET / NO_ADAPTER / NO_ECONOMIC_PROBE / NO_PRODUCTION_PROMOTION`
 
 ---
@@ -50,12 +51,12 @@ PROB-CAL-002
 
 `PROB-CARRY-002` 的第一版正式重建随后以 +34.67% Brier Skill、7.413% ECE 失败并停止。第 13.3
 节先完成结果后只读残差审计，2026-08-23 的人类决定再以合同 v1.2 只授权一个替换式 bounded-age
-候选：cap=20、不改任何门槛、不扫描、不读价格、只正式重建一次。当前顺序因此临时收窄为：
+候选：cap=20、不改任何门槛、不扫描、不读价格、只正式重建一次。该唯一重建现已通过原门，顺序为：
 
 ```text
-PROB-CARRY-SATURATION-003
-→ PASS: PROB-FRAGILITY-002
-→ FAIL: CONTRACT_STOP / NO_THIRD_CARRY_ATTEMPT
+PROB-CARRY-SATURATION-003=PASS / HISTORICAL_RESEARCH_SUPPORT
+→ PROB-FRAGILITY-002=NEXT_AUTHORIZED
+→ NO_THIRD_CARRY_ATTEMPT
 ```
 
 ---
@@ -433,8 +434,8 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - layer：ADAPTER
 - observed symptom：阶段 D 尚未运行，入口仍未满足。
 - reproduction command：读取本审计 `contract_stop_conditions`；不得运行经济命令。
-- causal evidence：Broad 已按人类范围决定关闭为基准率参考；Carry 固定候选 ECE 仍未过门，
-  Fragility 尚未产生正式 OOF，Stage C/D 均未完成。
+- causal evidence：Broad 已按人类范围决定关闭为基准率参考；bounded Carry 已通过原正式门，
+  但 Fragility 尚未产生正式 OOF，Stage C/D 均未完成。
 - business consequence：Short V3 probe 为 `NOT_ELIGIBLE`。
 - minimal repair：无；必须先关闭全部 P0/P1 station defect并完成阶段 D。
 - rejected alternatives：BASE_RATE_ONLY 替代 fragility、Tail/VVIX/VRP 并列硬门、提前读取价格。
@@ -451,8 +452,8 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - layer：PROBABILITY
 - observed symptom：`PROB-CARRY-002` 的最新 252 个正式 published OOF 保留 +34.67% Brier
   Skill，但 ECE 为 7.413%；最低概率 quintile 的预测/实际为 5.82%/13.73%，并由长 spell 主导。
-- reproduction command：只读关联现有 `outputs/probabilities/oof_ledger.parquet` 与
-  `outputs/states.parquet`，不得重训、不得读取产品价格；正式复现命令仍须等合同升版后一次执行。
+- reproduction command：先只读关联 `data/probability/oof_ledger.parquet` 与
+  `data/processed/states.parquet`；合同升版后只执行一次第 9.2 节冻结的正式命令链。
 - causal evidence：最低 quintile 51 行全部 `carry_spell_age>20`，其中 68.63% 为 age>60；但 51
   行只来自 2 个 spell，全部 7 个正例集中在其中 1 个 spell。既有 published OOF 在 development
   的 age>20 行为 4.58%/7.94%（预测/实际，n=340），confirmation 为 17.07%/20.85%
@@ -465,14 +466,14 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
   cap 扫描。
 - rejected alternatives：ECE 放宽至 7.5%、Skill/ECE 综合效用特批、age>15 事后惩罚、cap 扫描、
   新 calibrator/window/model、同时保留 bounded/unbounded age、外部特征包。
-- affected existing files：若合同授权，仅涉及 Carry duration fact、唯一 predictor 配置、重放完整性
-  验收与聚焦测试；不改变标签、horizon、eligibility、模型或校准器。
+- affected existing files：仅涉及 Carry duration fact、唯一 predictor 配置、重放完整性验收与聚焦
+  测试；未改变标签、horizon、eligibility、模型或校准器。
 - semantic/version impact：合同 v1.2 与本节已以纯文档冻结唯一替换语义；现有 V3
   feature/probability/schema/model/package 版本仍为 3.0.0。
 - station acceptance criterion：原 252/20/20、Brier Skill≥2%、ECE≤7% 与可靠性门一字不改；
   development/confirmation 及 spell 集中度必须并列报告；若唯一正式重建失败则停止，不得第三次尝试。
 - economic relevance：仅修复气象站概率；阶段 D 前仍不得读取产品价格或运行经济探针。
-- status：`AUDIT_CONFIRMED_RESIDUAL / V1_2_SPEC_FROZEN / IMPLEMENTATION_AUTHORIZED_ONCE`
+- status：`IMPLEMENTED / FORMAL_HISTORICAL_REPLAY_PASS / HISTORICAL_RESEARCH_SUPPORT`
 
 ---
 
@@ -858,9 +859,9 @@ ECE <= 7%
 STAGE_B_SEMANTICS_FROZEN
 PROB-CAL-002=PASS
 PROB-CARRY-002=FORMAL_FAIL_ECE_RECORDED
-PROB-CARRY-SATURATION-003=IMPLEMENTATION_AUTHORIZED_ONCE
-PROB-FRAGILITY-002=BLOCKED_PENDING_CARRY_SATURATION_RESULT
-STATE-CHURN-002=BLOCKED_PENDING_CARRY_SATURATION_RESULT
+PROB-CARRY-SATURATION-003=PASS_HISTORICAL_RESEARCH_SUPPORT
+PROB-FRAGILITY-002=NEXT_AUTHORIZED
+STATE-CHURN-002=BLOCKED_PENDING_FRAGILITY_RESULT
 PROB-BROAD-002=BASE_RATE_REFERENCE_PASS
 STAGE_D_NOT_RUN
 ADAPTER_BLOCKED
@@ -1013,7 +1014,7 @@ Q1 是明确残差但不是全部误差。即使反事实地把 Q1 修到零误�
 
 age 61+ 的 42 行全部来自同一 spell；最低 quintile 也只有两个 spell。故这里没有足够证据授权
 灵活 spline、分段惩罚或搜索 cap。唯一仍可治理的最小候选是复用阶段 A 预先存在的 20-session
-边界做物理饱和，并用原门槛接受或拒绝。合同 v1.2 现已完成纯文档冻结，当前裁决是：
+边界做物理饱和，并用原门槛接受或拒绝。合同 v1.2 纯文档冻结时的开工裁决是：
 
 ```text
 PROB-CARRY-002=FAIL_ECE
@@ -1022,4 +1023,94 @@ FORMAL_REBUILD_BUDGET=ONE
 THRESHOLDS_AND_MODEL=UNCHANGED
 PRODUCT_PRICES_READ=FALSE
 ECONOMIC_PROBE=NOT_RUN
+```
+
+### 13.4 `PROB-CARRY-SATURATION-003` 唯一正式重建结果
+
+实现严格用 `bounded_log1p_carry_spell_age` 替换旧无界字段：原始 `carry_spell_age` 继续作为逐行
+证据，模型、配置、fingerprint 与验收只消费 `log(1 + min(age, 20))`；验收明确要求旧 transformed
+字段不存在。标签、10-session horizon、eligibility、Logistic、regularization、rolling intercept、
+purge、252/20/20 与 Skill/ECE 门均未修改，也没有加入其他特征。
+
+合同唯一一次正式链为：
+
+```bash
+.venv/bin/python -m matvix build-history --project-dir .
+.venv/bin/python -m matvix train-probabilities --full-rebuild --project-dir .
+.venv/bin/python -m matvix accept-real --date 2026-08-20 --project-dir .
+```
+
+历史重建得到 3,334 行 state，其中 1,930 个 Carry eligible rows、最大 spell age 273；bounded/raw age
+与 recovering flag 全部逐行重放一致，legacy transformed columns 为空。最新 252 个完成且当时实际
+可发布 OOF 的原门结果为：
+
+| 候选 | samples | 正/负 | Brier Skill | ECE | AUC | 裁决 |
+|---|---:|---:|---:|---:|---:|---|
+| 第一版 unbounded published | 252 | 66/186 | 34.6690% | 7.4132% | — | FAIL |
+| bounded raw Logistic | 252 | 66/186 | 37.6273% | 7.0228% | 0.8385 | raw ECE 未过门 |
+| bounded rolling-intercept published | 252 | 66/186 | 36.1709% | 5.0964% | 0.8068 | **PASS** |
+
+相对第一版 published 候选，Brier Skill 增加 1.5019 percentage points，ECE 减少 2.3168
+percentage points。原 7.00% 门没有放宽；通过来自 frozen bounded predictor 与既有 rolling
+intercept 的组合，而不是 Skill 抵扣 ECE。
+
+published reliability quintiles 为：
+
+```text
+Q1  8.286% /  7.843%
+Q2 12.935% / 17.647%
+Q3 18.588% /  6.000%
+Q4 37.185% / 32.000%
+Q5 65.346% / 68.000%
+```
+
+固定正 slope 与 AUC 0.8068 证明没有第一版 Platt 的全局排序反转，但 Q2/Q3 的局部非单调仍应
+诚实保留，不能声称校准已完美。最近 eligible prediction session `2026-08-13` 的严格只读 as-of
+重放同样通过：252 行、63/189 classes、Skill 36.6367%、ECE 5.2672%、AUC 0.8043。
+
+两窗不是 untouched confirmation，但方向与门内结果如下：
+
+| 历史窗 | samples | published Skill | published ECE | AUC |
+|---|---:|---:|---:|---:|
+| development（至 2021-12-31） | 849 | 26.2726% | 6.2300% | 0.7915 |
+| confirmation（自 2022-01-03） | 780 | 16.1336% | 6.6530% | 0.7170 |
+
+age>20 残差不再两窗同向：development 为 8.575%/7.941%（预测/实际，n=340，7 spells），
+confirmation 仍为 16.538%/20.849%（n=259，8 spells）。因此不能把 cap=20 宣称为稳定物理真理。
+
+集中度限制仍然实质存在：最新 252 行来自 26 个 spell，但最大单 spell 占 102/252（40.48%）；
+age 61+ 占 42/252；66 个正例分布于 22 个 spell，最大正例 spell 占 9/66。leave-one-spell-out
+删除块诊断中 Skill 始终为正且范围 25.78%–46.55%，但 ECE 范围 3.606%–12.453%；删去上述
+102 行大 spell 时最差。合同没有冻结该删除块为额外通过门，故它不反向推翻正式 252 行 PASS；
+但它严格限制结论为 `HISTORICAL_RESEARCH_SUPPORT`，并要求前向观察。
+
+14 个 `accept-real` 完整性 gate、229 项 pytest、Ruff、Mypy、doctor 与 `git diff --check` 全通过；
+相对冻结 V2 基线的非生成 Python 与测试净新增 571 行，仍在 1,500 行预算内。正式产物 hash：
+
+```text
+states.parquet             e82ecc2934357b0979991d9db877b14cd6787e40694726da56da10af861a6fbe
+target_ledger.parquet      fb91968643c2b65fa28f72fa77ca485cb4db934c1e59d20fb554cf2d00939913
+oof_ledger.parquet         330476772918f52d1d588577ea337bd7b6ed596a3049294716e3c14dfa34f820
+artifact_contract.json     533111ad28b43b41fa16c604bb4d6e098e5199805eccf7d09895ada0487c7a93
+daily/2026-08-20.json      287ce0d5e16b94d2d5a3f5479c0c0a1ea00a42768f545a052478a44a23a2d215
+real_acceptance.json       111169cb6ef84b9c5029c36df34475ebcedc593317bb137f32de880d8bfe9064
+```
+
+正式裁决：
+
+```text
+PROB-CAL-002=PASS
+PROB-BROAD-002=BASE_RATE_REFERENCE_PASS
+PROB-CARRY-002=HISTORICAL_FIRST_ATTEMPT_FAIL_RETAINED
+PROB-CARRY-SATURATION-003=PASS
+EVIDENCE_CLASS=HISTORICAL_RESEARCH_SUPPORT
+PROB-FRAGILITY-002=NEXT_AUTHORIZED
+STATE-CHURN-002=NOT_RUN
+STAGE_D=NOT_RUN
+ADAPTER=BLOCKED
+ECONOMIC_PROBE=NOT_RUN
+PRODUCT_PRICES_READ=FALSE
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
 ```

@@ -37,9 +37,10 @@ EVENT_HORIZONS = {
 }
 EVENT_ORDER = tuple(EVENT_HORIZONS)
 
+CARRY_SPELL_AGE_CAP = 20
 CARRY_DURATION_FACTS = (
     "carry_spell_age",
-    "log1p_carry_spell_age",
+    "bounded_log1p_carry_spell_age",
     "carry_recovering_flag",
 )
 
@@ -75,7 +76,7 @@ LOGISTIC_FEATURES = {
         "p_d5_f4_f7_slope30",
         "p_neg_d5_log_f4_f7_level",
         "shock_scaled",
-        "log1p_carry_spell_age",
+        "bounded_log1p_carry_spell_age",
         "carry_recovering_flag",
     ],
 }

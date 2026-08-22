@@ -133,11 +133,26 @@ def test_carry_duration_acceptance_replays_exact_causal_facts() -> None:
     changed = states.copy()
     changed.loc[5, "carry_spell_age"] = 99.0
     changed_passed, changed_evidence = _audit_carry_duration_facts(changed)
+    changed_bounded = states.copy()
+    changed_bounded.loc[5, "bounded_log1p_carry_spell_age"] = 99.0
+    changed_bounded_passed, changed_bounded_evidence = _audit_carry_duration_facts(
+        changed_bounded
+    )
+    with_legacy = states.copy()
+    with_legacy["log1p_carry_spell_age"] = np.log1p(with_legacy["carry_spell_age"])
+    legacy_passed, legacy_evidence = _audit_carry_duration_facts(with_legacy)
 
     assert passed is True
     assert evidence["max_spell_age"] == 12
     assert changed_passed is False
     assert changed_evidence["column_replay"]["carry_spell_age"] is False
+    assert changed_bounded_passed is False
+    assert (
+        changed_bounded_evidence["column_replay"]["bounded_log1p_carry_spell_age"]
+        is False
+    )
+    assert legacy_passed is False
+    assert legacy_evidence["legacy_columns"] == ["log1p_carry_spell_age"]
 
 
 def test_invalid_probability_arithmetic_is_a_failed_acceptance_gate() -> None:

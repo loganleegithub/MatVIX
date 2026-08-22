@@ -158,9 +158,9 @@ def test_carry_duration_facts_reset_on_unknown_not_applicable_and_gap() -> None:
         [1.0, 2.0, np.nan, 1.0, 2.0, np.nan],
         equal_nan=True,
     )
-    assert facts.loc[[0, 1, 3, 4, 6, 7], "log1p_carry_spell_age"].to_numpy() == pytest.approx(
-        np.log1p([1, 2, 1, 2, 1, 2])
-    )
+    assert facts.loc[
+        [0, 1, 3, 4, 6, 7], "bounded_log1p_carry_spell_age"
+    ].to_numpy() == pytest.approx(np.log1p([1, 2, 1, 2, 1, 2]))
     assert facts.loc[[0, 1, 3, 4, 6, 7], "carry_recovering_flag"].tolist() == [
         0.0,
         0.0,
@@ -178,6 +178,20 @@ def test_carry_duration_facts_reset_on_unknown_not_applicable_and_gap() -> None:
     assert gap_facts.iloc[-1]["carry_spell_age"] == 1.0
 
 
+def test_carry_duration_transform_caps_at_twenty_and_removes_unbounded_fact() -> None:
+    frame = base_state_frame(25)
+    frame["carry_environment_state"] = "CLOSED"
+    frame["front_pressure"] = True
+    frame["log1p_carry_spell_age"] = 999.0
+
+    facts = add_carry_duration_facts(frame)
+
+    assert "log1p_carry_spell_age" not in facts
+    assert facts.loc[19, "bounded_log1p_carry_spell_age"] == pytest.approx(np.log1p(20))
+    assert facts.loc[24, "carry_spell_age"] == 25.0
+    assert facts.loc[24, "bounded_log1p_carry_spell_age"] == pytest.approx(np.log1p(20))
+
+
 def test_carry_predictor_order_is_duration_conditioned_fixed_10d() -> None:
     assert LOGISTIC_FEATURES["carry_environment_recovers_10d"] == [
         "repair_scaled",
@@ -186,7 +200,7 @@ def test_carry_predictor_order_is_duration_conditioned_fixed_10d() -> None:
         "p_d5_f4_f7_slope30",
         "p_neg_d5_log_f4_f7_level",
         "shock_scaled",
-        "log1p_carry_spell_age",
+        "bounded_log1p_carry_spell_age",
         "carry_recovering_flag",
     ]
 

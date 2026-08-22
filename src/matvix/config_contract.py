@@ -44,7 +44,7 @@ _FROZEN = {
     "probability_v2.yaml": (
         "version",
         "3.0.0",
-        "c01a1d90d261ec216ce1ebe6fa8526b93695e7d9dc8b9588e25ae27fac4c4639",
+        "f5197f238a3fe61c92991570289081e4680e01423af50348fff0b40275b96f43",
     ),
 }
 
@@ -258,6 +258,7 @@ def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
 def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
     from matvix.constants import (
         BASE_RATE_ONLY_EVENTS,
+        CARRY_SPELL_AGE_CAP,
         EVENT_ORDER,
         FEATURE_CONDITIONAL_EVENTS,
         LOGISTIC_FEATURES,
@@ -300,6 +301,12 @@ def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
         "probability.feature_conditional_events",
         tuple(event for event in EVENT_ORDER if event not in BASE_RATE_ONLY_EVENTS),
         FEATURE_CONDITIONAL_EVENTS,
+    )
+    _same(
+        errors,
+        "probability.carry_duration.spell_age_cap",
+        CARRY_SPELL_AGE_CAP,
+        config["carry_duration"]["spell_age_cap"],
     )
     spec = asdict(ProbabilitySpec())
     base = config["base_rate"]

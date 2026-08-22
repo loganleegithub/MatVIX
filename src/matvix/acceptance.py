@@ -589,7 +589,12 @@ def _event_cohort_evidence(
 
 
 def _audit_carry_duration_facts(states: pd.DataFrame) -> tuple[bool, dict[str, Any]]:
-    columns = ("carry_spell_age", "log1p_carry_spell_age", "carry_recovering_flag")
+    legacy_columns = [column for column in ("log1p_carry_spell_age",) if column in states]
+    columns = (
+        "carry_spell_age",
+        "bounded_log1p_carry_spell_age",
+        "carry_recovering_flag",
+    )
     missing = [column for column in columns if column not in states]
     if missing:
         return False, {"missing_columns": missing, "rows": len(states)}
@@ -607,9 +612,16 @@ def _audit_carry_duration_facts(states: pd.DataFrame) -> tuple[bool, dict[str, A
             states.loc[eligible, "carry_environment_state"].eq("RECOVERING").astype(float)
         ).all()
     )
-    passed = all(matches.values()) and null_truth and recovering_truth and bool(eligible.any())
+    passed = (
+        not legacy_columns
+        and all(matches.values())
+        and null_truth
+        and recovering_truth
+        and bool(eligible.any())
+    )
     return passed, {
         "rows": len(states),
+        "legacy_columns": legacy_columns,
         "eligible_rows": int(eligible.sum()),
         "max_spell_age": (
             int(states.loc[eligible, "carry_spell_age"].max()) if eligible.any() else 0

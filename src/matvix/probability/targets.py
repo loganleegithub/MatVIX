@@ -8,6 +8,7 @@ import pandas as pd
 from matvix.calendar import add_sessions, decision_as_of
 from matvix.constants import (
     CARRY_DURATION_FACTS,
+    CARRY_SPELL_AGE_CAP,
     EVENT_HORIZONS,
     EVENT_ORDER,
     LOGISTIC_FEATURES,
@@ -93,7 +94,7 @@ def add_carry_duration_facts(frame: pd.DataFrame) -> pd.DataFrame:
 
     if "session_date" not in frame:
         raise ValueError("Carry duration facts require session_date")
-    result = frame.copy()
+    result = frame.drop(columns=["log1p_carry_spell_age"], errors="ignore").copy()
     dates = pd.to_datetime(result["session_date"], errors="coerce").dt.normalize()
     if dates.isna().any():
         raise ValueError("Carry duration facts contain an invalid session_date")
@@ -120,7 +121,7 @@ def add_carry_duration_facts(frame: pd.DataFrame) -> pd.DataFrame:
         prior_date = current_date
 
     result["carry_spell_age"] = ages
-    result["log1p_carry_spell_age"] = np.log1p(ages)
+    result["bounded_log1p_carry_spell_age"] = np.log1p(ages.clip(upper=CARRY_SPELL_AGE_CAP))
     result["carry_recovering_flag"] = recovering
     return result
 
