@@ -1,13 +1,14 @@
 # MatVIX V3 概率、脆弱性与状态稳定性施工合同
 
-> 状态：FROZEN FOR NEXT SESSION
-> 合同版本：1.0
+> 状态：AMENDED / AUTHORIZED FOR STAGE B
+> 合同版本：1.1
 > 冻结日期：2026-08-22
+> 修订日期：2026-08-22
 > V2 代码基线：`a2a8a584f6435d7ffc972eb57b0928eeb0e4a802`
 > 正式 main 基线：`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`
 > 目标分支：`codex/matvix-v3`
 > 执行方式：下一独立 Codex session 直接审计、冻结规格、按 defect_id 施工和本地复核
-> 核心顺序：概率校准治理 → Carry hazard → Broad 直接证据 → 凸性脆弱性事件 → 状态微震荡 → 固定适配器 → 经济诊断与前向观察
+> 核心顺序：概率校准治理 → Carry duration → 凸性脆弱性事件 → risk-on 状态微震荡 → 完整站内验收 → 固定适配器 → 一次经济诊断与前向观察
 
 ---
 
@@ -24,11 +25,23 @@ DATA、TENOR、STATE/TIMING 与 PROBABILITY INTEGRITY 验收，但没有获得�
   `-23.80%` 恶化至 `-24.54%`，最差滚动 20 日由 `-13.15%` 恶化至 `-13.97%`；
 - V2 因此保持 `NOT_READY / NO_PROMOTION / NO_COMPREHENSIVE_INCREMENT`。
 
+阶段 A 随后补足并重放了 Broad 的 252 个 raw OOF，但 V2 raw Logistic 的直接 10 日 Brier
+Skill 仍只有 `+0.82%`，固定 duration/breadth 候选也没有获得直接增量。2026-08-22 的人类明确
+决定因此修订产品边界：
+
+- `broad_stress_persists_10d` 的天气事件、eligibility、标签和事实语义继续保留；
+- 它的 V3 概率输出固定为因果 `BASE_RATE_ONLY` 历史参考，不再施工或发布
+  `FEATURE_CONDITIONAL` direct-10D 模型；
+- 它从 Brier Skill/ECE 的正式模型通过门中豁免，但不从 PIT、outcome availability、base-rate
+  算术、censoring、append invariance 和诚实状态标记中豁免；
+- `BASE_RATE_REFERENCE=PASS` 只表示基准率发布合同完整，绝不表示 Broad 模型通过或具备预测增量；
+- 该范围决定关闭原 Broad P0 阻断，并授权从阶段 B 继续；它不反向改写阶段 A 的失败证据。
+
 V3 只回答六个问题：
 
 1. 当前顺序 Platt 为什么把本来有排序增量的 Carry 原始概率校准坏？
 2. Carry 恢复是否首先是带有 spell-age 依赖的离散时间 hazard，而不是缺少更多市场指标？
-3. Broad 失败究竟来自二级校准 warm-up、重叠事件簇、特征不足还是标签问题？
+3. Broad direct-10D 被诚实降级后，如何发布可重放且不冒充条件模型的因果基准率参考？
 4. 能否在不读取产品价格的条件下定义并验证“平静 Carry 下未来 5 日天气恶化”的凸性脆弱性事件？
 5. 947 次 phase 转换中，哪些是真实天气变化，哪些才是无业务意义的 micro-churn？
 6. 站内全部通过后，一个事先冻结、非调参的 V3 Short 适配器能否相对 V2 同时改善收益、最大回撤与 Worst-20D？
@@ -56,6 +69,8 @@ V3 只回答六个问题：
   65 个连续事件簇。它不是简单的“正例极端稀少”；
 - Broad 直接使用最新 252 个 raw OOF 时 Brier Skill 约为 `+0.82%`、ECE 约为 `5.69%`，即使
   消除 191 样本门，模型增量本身仍未通过 2% 门；
+- 阶段 A 固定 duration/breadth Broad 候选 raw Skill 为 `-0.48%`，rolling-intercept Skill 为
+  `-3.16%`；V3 据此采用 `BASE_RATE_ONLY` 产品范围决定，而不是继续搜索模型；
 - 经济区间内 V2 combined 有 507 次 phase 变化、241 次实际资产切换；278 次 phase 变化没有
   触发交易。V2 turnover 低于 V1，故 947 次 phase 转换不是 `$2,204.41` 成本的直接原因；
 - 2024-09-03 的共同 SVXY 暴露之前，V2 已发布 `tail=EXTREME`、
@@ -441,16 +456,33 @@ status
 |---|---|---|---|
 | `PROB-CAL-002` | REQUIRED | PROBABILITY | 自由 Platt 排序倒置、漂移滞后和 warm-up publication 语义 |
 | `PROB-CARRY-002` | REQUIRED | PROBABILITY | Carry recovery 的 duration/hazard 信息缺失 |
-| `PROB-BROAD-002` | REQUIRED | PROBABILITY | Broad 直接 10D 增量不足且事件簇相关 |
-| `PROB-FRAGILITY-002` | AUDIT_REQUIRED | PROBABILITY | `calm_carry_breaks_5d` 只有样本与独立性通过后才能正式化 |
-| `STATE-CHURN-002` | AUDIT_REQUIRED | STATE/TIMING | 只有 micro-churn 定义复现后才能施工 |
+| `PROB-BROAD-002` | CLOSED_BY_SCOPE | PROBABILITY | direct-10D 条件模型拒绝；固定为 `BASE_RATE_ONLY` 参考并豁免模型门 |
+| `PROB-FRAGILITY-002` | REQUIRED / AUDIT_ACCEPTED | PROBABILITY | `calm_carry_breaks_5d` 正式进入阶段 B 冻结与完整模型验收 |
+| `STATE-CHURN-002` | REQUIRED_LIMITED | STATE/TIMING | 只允许处理阶段 A 编号的 14 个 risk-on 候选；20 个 risk-off 禁止阻尼 |
 | `DATA-OPTION-002` | DEFERRED | DATA | 需要新授权数据时另行立项，不属于默认 V3 |
 | `ADAPTER-002` | BLOCKED_BY_STAGE_D | ADAPTER | 站内全通过后只冻结一个 fragility-aware 固定探针 |
+
+阶段 B 冻结后的正式概率集合固定为：
+
+```text
+FEATURE_CONDITIONAL_REQUIRED:
+    acute_front_stress_5d
+    front_inversion_5d
+    mid_curve_pressure_accelerates_5d
+    carry_environment_recovers_10d
+    calm_carry_breaks_5d
+
+BASE_RATE_ONLY_EXEMPT_FROM_MODEL_GATE:
+    broad_stress_persists_10d
+```
+
+这在验收计数上是五个条件概率模型加一个基准率参考。不得为形成“四加一”的口头计数而删除
+Carry、Fragility 或三个既有通过事件中的任何一个。
 
 阶段 B 必须以纯文档提交冻结：
 
 - calibration input、公式、窗口、warm-up publication、fallback 和 model status；
-- Carry/Broad duration features 的公式、reset/UNKNOWN/PIT 行为；
+- Carry duration features 与 Broad `BASE_RATE_ONLY` 发布的公式、reset/UNKNOWN/PIT 行为；
 - 正式事件集合及每个 onset/horizon/future predicate/censoring/predictors；
 - 是否接纳 `calm_carry_breaks_5d`；
 - micro-churn 是否构成 defect，以及只允许修改的转移方向；
@@ -468,11 +500,10 @@ status
 
 1. `PROB-CAL-002`；
 2. `PROB-CARRY-002`；
-3. `PROB-BROAD-002`；
-4. `PROB-FRAGILITY-002`，仅在审计接纳时；
-5. `STATE-CHURN-002`，仅在审计接纳时；
-6. 必要的 output/Schema/narrative/Dashboard 兼容；
-7. 阶段 D 完整站内验收。
+3. `PROB-FRAGILITY-002`；
+4. `STATE-CHURN-002`，严格限于已接纳的 risk-on 编号；
+5. 必要的 output/Schema/narrative/Dashboard 兼容；
+6. 阶段 D 完整站内验收。
 
 每个 defect 一个提交：
 
@@ -550,22 +581,24 @@ V2 predictors + log1p_carry_spell_age + carry_recovering_flag
 不得同时加入 SPX/VVIX/VRP 候选。duration 模型仍失败时，只能返回本 defect 或为一个经阶段 A
 确认的残差事实新立 defect；不得一次加入特征包。
 
-### 5.3 PROB-BROAD-002 最小修复
+### 5.3 PROB-BROAD-002 `BASE_RATE_ONLY` 范围关闭
 
-保持 `broad_stress_persists_10d` 标签不变。阶段 B 只能从以下因果 duration/breadth 候选中冻结
-最小集合：
+`broad_stress_persists_10d` 的 onset、eligibility、horizon、future predicate、censoring 和标签保持不变，
+但 V3 不训练、不选择、不发布它的 feature-conditional Logistic 或二级 calibrator。eligible 且 outcome
+尚未知的当日发布值只允许复用阶段 B 冻结的既有因果历史基准率公式，并明确持久化：
 
 ```text
-broad_spell_age
-broad_days_last_5
-broad_days_last_10
-current f4_f7_inversion_share
-current/d5 f4_f7 level and slope
+probability_kind = BASE_RATE_ONLY
+model_status = BASE_RATE_ONLY
+calibration_method = NOT_APPLICABLE
+raw_probability = null
+published_probability = causal_base_rate
 ```
 
-先复用现有 Logistic 与统一 calibration policy。5D 辅助头、hierarchical model、Bayesian shrinkage
-都不是初始实现；只有最小模型在直接 10D OOF 中仍失败，且阶段 A 已证明跨 horizon 独立信息时，
-才可在同一 defect 中重新冻结规格。任何 5D 输出不得替代或计作 10D 通过。
+实际枚举名必须在阶段 B 按现有 Schema 能力冻结；若现有枚举不同，使用语义等价的既有值，不得建立
+平行表示。Broad 仍参加 probability integrity 与 `BASE_RATE_REFERENCE` 验收，但不参加 252/20/20、
+Brier Skill、ECE 或 AUC 的 `FEATURE_CONDITIONAL` 模型门。不得把参考值标记为 calibrated model、
+不得把 base-rate reference 的完整性写成 Broad 模型 `PASS`，也不得继续搜索 direct-10D 特征。
 
 ### 5.4 PROB-FRAGILITY-002
 
@@ -637,7 +670,8 @@ TENOR
 STATE_TIMING
 PROBABILITY_INTEGRITY
 PROBABILITY_MODEL
-FRAGILITY_EVENT, if accepted into the formal set
+BASE_RATE_REFERENCE
+FRAGILITY_EVENT
 ```
 
 ### 6.1 DATA/TENOR/STATE 回归门
@@ -662,7 +696,7 @@ FRAGILITY_EVENT, if accepted into the formal set
 
 ### 6.3 Probability model 门
 
-每个正式事件都必须在最新 252 个完成、当时实际可发布的 OOF 上满足：
+每个 `FEATURE_CONDITIONAL_REQUIRED` 正式事件都必须在最新 252 个完成、当时实际可发布的 OOF 上满足：
 
 ```text
 samples == 252
@@ -675,8 +709,9 @@ ECE <= 7%
 同时必须报告 raw 与 published probability、reliability quintiles、AUC、年度分层和事件簇 block
 bootstrap。不得用 AUC 抵消 Brier/ECE，也不得用总体均值掩盖 rank reversal。
 
-V3 晋级要求五个 V2 正式事件全部通过；若 `calm_carry_breaks_5d` 被加入正式集合，它也必须通过。
-任何正式事件 `FAIL/INSUFFICIENT_EVIDENCE` 时，`PROBABILITY_MODEL=FAIL`，停止进入阶段 E。
+V3 晋级要求 acute/front/mid/carry/fragility 五个 `FEATURE_CONDITIONAL_REQUIRED` 事件全部通过。
+Broad 是独立的 `BASE_RATE_ONLY` 参考，不计入模型通过率。任何必需条件模型
+`FAIL/INSUFFICIENT_EVIDENCE` 时，`PROBABILITY_MODEL=FAIL`，停止进入阶段 E。
 
 这里的 `PASS` 只表示在因果 rolling-origin 历史账本上满足冻结研究门，不能恢复已经失去的 untouched
 确认资格；它只授权进入价格盲适配器冻结，不构成 production promotion。
@@ -692,18 +727,19 @@ Carry：
 
 Broad：
 
-- 252 行是当时实际可发布 OOF，不以 prior、重复标签或合成样本补足；
-- 报告实际独立事件簇和 block CI；
-- 直接 10D label 自身通过，不借用 5D 指标；
-- 若 cluster 方向或 Brier skill 不稳，保持 FAIL，不降低门。
+- 事件、eligibility、10D 标签、censoring 和实际独立事件簇继续可重放；
+- 所有 eligible 发布行只使用当时 outcome-available 历史形成的冻结因果基准率；
+- `probability_kind/model_status/calibration_method/raw_probability` 与 `BASE_RATE_ONLY` 合同逐行一致；
+- append-only 重放不改变过去基准率，且不以 prior、重复标签或合成样本补足历史；
+- `BASE_RATE_REFERENCE=PASS` 不得显示、汇总或叙述为 Broad feature-conditional model `PASS`。
 
 ### 6.5 进入适配器冻结的门槛
 
 必须同时满足：
 
 - DATA/TENOR/STATE_TIMING/PROBABILITY_INTEGRITY 全部 PASS；
-- 五个 V2 正式概率事件全部 PASS；
-- `calm_carry_breaks_5d` 被正式接纳且 PASS；
+- acute/front/mid/carry/fragility 五个条件概率事件全部 PASS；
+- Broad `BASE_RATE_REFERENCE=PASS` 且仅标记为 `BASE_RATE_ONLY`；
 - 没有未关闭 P0/P1 station defect；
 - V3 语义、配置、Schema 和 package version 已冻结；
 - 站内验收提交完成且工作树干净。
@@ -866,12 +902,17 @@ HISTORICAL_RESEARCH_SUPPORT
 → 不从产品结果反推天气或概率阈值
 ```
 
+合同 v1.1 的人类范围决定明确解除 v1.0 中“Broad direct skill 不足即停止全部施工”的阻断：
+阶段 A 的 direct-10D 失败证据继续保留，`PROB-BROAD-002` 以 `CLOSED_BY_SCOPE /
+BASE_RATE_ONLY` 关闭，阶段 B–F 不得再次把它当成待修复条件模型。该豁免只作用于 Broad 的模型
+Skill/ECE 门，不豁免基准率发布完整性，也不预先保证 Carry、Fragility、状态或经济验收通过。
+
 以下情况必须停止：
 
 - V2 基线/hash/测试无法复现；
 - calibration 或 duration 诊断不能按 PIT 重放；
 - 需要 event-specific 算法、阈值扫描或大规模 feature search 才能通过；
-- Broad 仍不足 252 个实际可发布 OOF 或直接 skill 不足；
+- Broad 被发布为 feature-conditional/calibrated model，或把基准率完整性冒充成模型增量 PASS；
 - Fragility event 样本、独立性或两窗方向不足；
 - 需要新 option/OHLC 数据但没有独立授权合同；
 - risk-off timing 因 churn 修复而变慢；
@@ -900,25 +941,26 @@ V3 必须复用 V2 已有 pipeline、概率、acceptance 和 economic probe。�
 
 ## 11. 提交与最终验证顺序
 
-当前 session 只提交：
+合同 v1.0 session 已提交：
 
 ```text
 docs: freeze MatVIX V3 construction plan
 ```
 
-下一 session 建议提交边界：
+V3 后续提交边界：
 
 1. `audit(v3): record probability and stability defects`；
-2. `docs(v3): freeze probability and fragility semantics`；
-3. `fix(PROB-CAL-002): publish monotone causal probabilities`；
-4. `fix(PROB-CARRY-002): model carry recovery duration`；
-5. `fix(PROB-BROAD-002): model direct broad persistence`；
-6. `feat(PROB-FRAGILITY-002): publish calm carry break risk`，仅在接纳时；
-7. `fix(STATE-CHURN-002): remove confirmed micro churn`，仅在接纳时；
+2. `docs(v3): amend Broad base-rate and fragility scope`；
+3. `docs(v3): freeze probability and fragility semantics`；
+4. `fix(PROB-CAL-002): publish monotone causal probabilities`；
+5. `fix(PROB-CARRY-002): model carry recovery duration`；
+6. `feat(PROB-FRAGILITY-002): publish calm carry break risk`；
+7. `fix(STATE-CHURN-002): remove confirmed risk-on micro churn`；
 8. `test(v3): complete weather-station self-acceptance`；
 9. `docs(v3): freeze fragility-aware economic adapter`；
-10. `test(v3): run frozen V2 versus V3 probes`；
-11. `docs(v3): record verdict and prospective boundary`。
+10. `feat(ADAPTER-002): implement frozen fragility adapter`；
+11. `test(v3): run frozen V2 versus V3 probes`；
+12. `docs(v3): record verdict and prospective boundary`。
 
 每个功能提交运行聚焦测试、正式历史/OOF 重建和完整站内回归。最终必须运行：
 
@@ -944,10 +986,10 @@ git status --short --branch
 
 1. 当前 Platt 为什么失败，V3 如何防止排序倒置和 warm-up 失真；
 2. Carry duration facts 是否提供稳定、直接的 OOF 增量；
-3. Broad 10D 是否真正通过，而非靠 5D/prior/样本口径；
+3. Broad 10D 是否严格保持 `BASE_RATE_ONLY`，且没有被冒充为条件模型通过；
 4. `calm_carry_breaks_5d` 是否被接纳并通过；
 5. micro-churn 是否存在、改了什么、有没有牺牲 risk-off timing；
-6. 五个原 V2 事件和任何新增正式事件的独立模型结论；
+6. 五个必需条件模型、Broad 基准率参考和各自独立状态结论；
 7. V3 vs V2 固定探针是否实现 Short 帕累托改善；
 8. 哪些结果只是污染历史支持，哪些仍需前向观察；
 9. 尚未验证、被拒绝或因数据权利延后的能力。
@@ -969,7 +1011,9 @@ RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION
 阶段 A 的 calibration、Carry hazard、Broad、calm-carry break、micro-churn 与数据可行性审计。
 阶段 A–D 不得读取 SVXY/SGOV/VXZ 价格或 v2_economic_probe 逐日文件，不得恢复隔离包，
 不得扫描阈值、模型、窗口或特征。只有 MATVIX_V3_AUDIT.md 缺陷台账和 V3 语义规格以纯文档
-提交冻结后，才按 PROB-CAL-002 → PROB-CARRY-002 → PROB-BROAD-002 → 已接纳候选的顺序
-分别施工。所有正式概率事件通过后，先价格盲冻结唯一适配器，才能运行一次历史经济诊断；
+提交冻结后，按 PROB-CAL-002 → PROB-CARRY-002 → PROB-FRAGILITY-002 →
+STATE-CHURN-002 的顺序分别施工；Broad 只发布 `BASE_RATE_ONLY` 参考，不再施工 direct-10D
+条件模型。五个必需条件概率事件与 Broad 基准率完整性全部通过后，先价格盲冻结唯一适配器，
+才能运行一次历史经济诊断；
 历史结果只允许标记 HISTORICAL_RESEARCH_SUPPORT，不得晋升或推送。
 ```
