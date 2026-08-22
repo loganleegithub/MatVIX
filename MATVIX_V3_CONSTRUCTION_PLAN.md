@@ -1,14 +1,14 @@
 # MatVIX V3 概率、脆弱性与状态稳定性施工合同
 
-> 状态：AMENDED / AUTHORIZED FOR STAGE B
-> 合同版本：1.1
+> 状态：AMENDED / PROB-CARRY-SATURATION-003 AUTHORIZED
+> 合同版本：1.2
 > 冻结日期：2026-08-22
-> 修订日期：2026-08-22
+> 修订日期：2026-08-23
 > V2 代码基线：`a2a8a584f6435d7ffc972eb57b0928eeb0e4a802`
 > 正式 main 基线：`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`
 > 目标分支：`codex/matvix-v3`
 > 执行方式：下一独立 Codex session 直接审计、冻结规格、按 defect_id 施工和本地复核
-> 核心顺序：概率校准治理 → Carry duration → 凸性脆弱性事件 → risk-on 状态微震荡 → 完整站内验收 → 固定适配器 → 一次经济诊断与前向观察
+> 核心顺序：概率校准治理 → Carry duration → 唯一 bounded-duration 修复 → 凸性脆弱性事件 → risk-on 状态微震荡 → 完整站内验收 → 固定适配器 → 一次经济诊断与前向观察
 
 ---
 
@@ -36,6 +36,20 @@ Skill 仍只有 `+0.82%`，固定 duration/breadth 候选也没有获得直接�
   算术、censoring、append invariance 和诚实状态标记中豁免；
 - `BASE_RATE_REFERENCE=PASS` 只表示基准率发布合同完整，绝不表示 Broad 模型通过或具备预测增量；
 - 该范围决定关闭原 Broad P0 阻断，并授权从阶段 B 继续；它不反向改写阶段 A 的失败证据。
+
+第一版 Carry duration 正式重建随后取得 +34.67% published Brier Skill，但 ECE 7.413% 超过
+7.000% 上限并按合同停止。2026-08-23 的人类明确决定以 v1.2 只解除这个停止点，授权一个已立项
+P1 缺陷 `PROB-CARRY-SATURATION-003`：
+
+- 旧 `log1p_carry_spell_age` 必须被
+  `bounded_log1p_carry_spell_age = log(1 + min(carry_spell_age, 20))` 替换，不得二者并列；
+- 20 只来自阶段 A 事先冻结的 `11–20 / 21–60` 分箱边界；不得扫描 cap 或试 age>15 惩罚；
+- 标签、horizon、eligibility、Logistic、regularization、rolling fit、校准器、窗口、purge、
+  252/20/20、Brier Skill≥2% 与 ECE≤7% 全部不变；
+- 只允许一次实现和一次正式全历史/OOF 重建；若失败立即停止，不得第三次 Carry 尝试；
+- 历史通过最多构成 `HISTORICAL_RESEARCH_SUPPORT`，不得表述为独立确认、经济改进或晋升。
+
+该修订不提前授权 Fragility、Churn、阶段 D、适配器或经济探针；它们仍取决于这次 Carry 正式门。
 
 V3 只回答六个问题：
 
@@ -455,7 +469,8 @@ status
 | defect_id | 初始状态 | 层 | 说明 |
 |---|---|---|---|
 | `PROB-CAL-002` | REQUIRED | PROBABILITY | 自由 Platt 排序倒置、漂移滞后和 warm-up publication 语义 |
-| `PROB-CARRY-002` | REQUIRED | PROBABILITY | Carry recovery 的 duration/hazard 信息缺失 |
+| `PROB-CARRY-002` | IMPLEMENTED / FAIL_ECE | PROBABILITY | Carry recovery duration 带来强 Skill，但 ECE 7.413% 未过门 |
+| `PROB-CARRY-SATURATION-003` | REQUIRED / AUDIT_CONFIRMED | PROBABILITY | 极长 spell 的无界 age 外推与校准残差 |
 | `PROB-BROAD-002` | CLOSED_BY_SCOPE | PROBABILITY | direct-10D 条件模型拒绝；固定为 `BASE_RATE_ONLY` 参考并豁免模型门 |
 | `PROB-FRAGILITY-002` | REQUIRED / AUDIT_ACCEPTED | PROBABILITY | `calm_carry_breaks_5d` 正式进入阶段 B 冻结与完整模型验收 |
 | `STATE-CHURN-002` | REQUIRED_LIMITED | STATE/TIMING | 只允许处理阶段 A 编号的 14 个 risk-on 候选；20 个 risk-off 禁止阻尼 |
@@ -500,10 +515,11 @@ Carry、Fragility 或三个既有通过事件中的任何一个。
 
 1. `PROB-CAL-002`；
 2. `PROB-CARRY-002`；
-3. `PROB-FRAGILITY-002`；
-4. `STATE-CHURN-002`，严格限于已接纳的 risk-on 编号；
-5. 必要的 output/Schema/narrative/Dashboard 兼容；
-6. 阶段 D 完整站内验收。
+3. `PROB-CARRY-SATURATION-003`，仅在 v1.2 授权的一次受控修复中；
+4. `PROB-FRAGILITY-002`；
+5. `STATE-CHURN-002`，严格限于已接纳的 risk-on 编号；
+6. 必要的 output/Schema/narrative/Dashboard 兼容；
+7. 阶段 D 完整站内验收。
 
 每个 defect 一个提交：
 
@@ -556,7 +572,7 @@ calibration_samples / calibration_positive / calibration_negative / intercept_b`
 
 `CURRENT_FREE_PLATT_504` 只保留在冻结 V2 artifact 和审计对照中，V3 运行代码不得保留双路径。
 
-### 5.2 PROB-CARRY-002 最小修复
+### 5.2 PROB-CARRY-002 第一版最小修复（已执行并失败）
 
 第一版只允许在现有 Logistic 中增加已冻结 duration facts，不引入 survival library：
 
@@ -580,6 +596,45 @@ V2 predictors + log1p_carry_spell_age + carry_recovering_flag
 
 不得同时加入 SPX/VVIX/VRP 候选。duration 模型仍失败时，只能返回本 defect 或为一个经阶段 A
 确认的残差事实新立 defect；不得一次加入特征包。
+
+### 5.2.1 PROB-CARRY-SATURATION-003 唯一受控修复
+
+`MATVIX_V3_AUDIT.md` 已先以纯文档确认长 spell 同向低估和独立 spell 集中度。本节是 v1.2
+唯一新增施工授权；它不把第一版失败改写为通过，也不修改任何模型门。
+
+保留逐行原始证据字段：
+
+```text
+carry_spell_age:
+    reset / null / gap rules unchanged from 5.2
+
+carry_recovering_flag:
+    definition unchanged from 5.2
+```
+
+正式变换只允许：
+
+```text
+CARRY_SPELL_AGE_CAP = 20
+bounded_log1p_carry_spell_age = log(1 + min(carry_spell_age, CARRY_SPELL_AGE_CAP))
+```
+
+正式 predictor 顺序只把原位置的 `log1p_carry_spell_age` 替换为
+`bounded_log1p_carry_spell_age`；旧 transformed 字段不得留在 runtime state、配置、模型 fingerprint
+或验收列中。不得把 bounded 与 unbounded age 同时提供给模型。
+
+禁止：
+
+- cap/window/bin/model/calibrator/regularization/feature 扫描；
+- age>15 线性惩罚、spline、isotonic 或 event-specific 后处理；
+- 修改 label、horizon、eligibility、purge、outcome availability 或 publication fallback；
+- 放宽 ECE、建立 Skill 抵扣 ECE 的综合效用，或只给 Carry 单点特批；
+- 使用 SPX/VVIX/VRP、产品价格或阶段 F 经济结果选择候选。
+
+只允许完成一次正式 `build-history → train-probabilities --full-rebuild → accept-real` 链。验收继续使用
+252 completed published OOF、正负各至少 20、Brier Skill≥2%、ECE≤7% 和既有 reliability/integrity
+门，并额外并列报告 development/confirmation 与 spell 集中度。通过时只记
+`HISTORICAL_RESEARCH_SUPPORT` 并授权下一 defect；失败时恢复合同停止，不得再改 Carry。
 
 ### 5.3 PROB-BROAD-002 `BASE_RATE_ONLY` 范围关闭
 
@@ -907,6 +962,10 @@ HISTORICAL_RESEARCH_SUPPORT
 BASE_RATE_ONLY` 关闭，阶段 B–F 不得再次把它当成待修复条件模型。该豁免只作用于 Broad 的模型
 Skill/ECE 门，不豁免基准率发布完整性，也不预先保证 Carry、Fragility、状态或经济验收通过。
 
+合同 v1.2 进一步只解除 `PROB-CARRY-002` 第一版 ECE 失败产生的停止，以运行 5.2.1 的唯一
+bounded-duration 候选。该例外不授权任何其他第二候选；正式重建一旦失败，下列“第二次实现仍无法
+关闭同一 defect”停止条件立即生效。
+
 以下情况必须停止：
 
 - V2 基线/hash/测试无法复现；
@@ -954,13 +1013,16 @@ V3 后续提交边界：
 3. `docs(v3): freeze probability and fragility semantics`；
 4. `fix(PROB-CAL-002): publish monotone causal probabilities`；
 5. `fix(PROB-CARRY-002): model carry recovery duration`；
-6. `feat(PROB-FRAGILITY-002): publish calm carry break risk`；
-7. `fix(STATE-CHURN-002): remove confirmed risk-on micro churn`；
-8. `test(v3): complete weather-station self-acceptance`；
-9. `docs(v3): freeze fragility-aware economic adapter`；
-10. `feat(ADAPTER-002): implement frozen fragility adapter`；
-11. `test(v3): run frozen V2 versus V3 probes`；
-12. `docs(v3): record verdict and prospective boundary`。
+6. `audit(v3): confirm carry saturation residual`；
+7. `docs(v3): authorize bounded carry saturation repair`；
+8. `fix(PROB-CARRY-SATURATION-003): bound carry spell age`；
+9. `feat(PROB-FRAGILITY-002): publish calm carry break risk`；
+10. `fix(STATE-CHURN-002): remove confirmed risk-on micro churn`；
+11. `test(v3): complete weather-station self-acceptance`；
+12. `docs(v3): freeze fragility-aware economic adapter`；
+13. `feat(ADAPTER-002): implement frozen fragility adapter`；
+14. `test(v3): run frozen V2 versus V3 probes`；
+15. `docs(v3): record verdict and prospective boundary`。
 
 每个功能提交运行聚焦测试、正式历史/OOF 重建和完整站内回归。最终必须运行：
 
@@ -1011,8 +1073,9 @@ RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION
 阶段 A 的 calibration、Carry hazard、Broad、calm-carry break、micro-churn 与数据可行性审计。
 阶段 A–D 不得读取 SVXY/SGOV/VXZ 价格或 v2_economic_probe 逐日文件，不得恢复隔离包，
 不得扫描阈值、模型、窗口或特征。只有 MATVIX_V3_AUDIT.md 缺陷台账和 V3 语义规格以纯文档
-提交冻结后，按 PROB-CAL-002 → PROB-CARRY-002 → PROB-FRAGILITY-002 →
-STATE-CHURN-002 的顺序分别施工；Broad 只发布 `BASE_RATE_ONLY` 参考，不再施工 direct-10D
+提交冻结后，按 PROB-CAL-002 → PROB-CARRY-002 → PROB-CARRY-SATURATION-003 →
+PROB-FRAGILITY-002 → STATE-CHURN-002 的顺序分别施工；Saturation 只允许 cap=20 的替换式候选和
+一次正式重建，原模型门不变，失败即停止；Broad 只发布 `BASE_RATE_ONLY` 参考，不再施工 direct-10D
 条件模型。五个必需条件概率事件与 Broad 基准率完整性全部通过后，先价格盲冻结唯一适配器，
 才能运行一次历史经济诊断；
 历史结果只允许标记 HISTORICAL_RESEARCH_SUPPORT，不得晋升或推送。

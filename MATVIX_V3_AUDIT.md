@@ -1,12 +1,14 @@
 # MatVIX V3 阶段 A 业务审计与阶段 B 语义冻结
 
-> 合同：`MATVIX_V3_CONSTRUCTION_PLAN.md` v1.1
+> 合同：`MATVIX_V3_CONSTRUCTION_PLAN.md` v1.2
 > 审计日期：2026-08-22
+> 最近修订：2026-08-23
 > 分支：`codex/matvix-v3`
 > V2 代码基线：`a2a8a584f6435d7ffc972eb57b0928eeb0e4a802`
 > 原合同提交：`b1394e7aa87de3e37648ed6fd61e47a33cf22df8`
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
-> 当前裁决：`STAGE_B_SEMANTICS_FROZEN / STAGE_C_IMPLEMENTATION_AUTHORIZED`
+> v1.2 修订提交：`docs(v3): authorize bounded carry saturation repair`
+> 当前裁决：`PROB-CARRY-SATURATION-003_SPEC_FROZEN / IMPLEMENTATION_AUTHORIZED_ONCE`
 > 最高允许结论：`NO_STAGE_D_PASS_YET / NO_ADAPTER / NO_ECONOMIC_PROBE / NO_PRODUCTION_PROMOTION`
 
 ---
@@ -39,11 +41,22 @@ Broad 不再缺少 252 个 raw OOF，但直接 10D 增量仍失败：
 ```text
 PROB-CAL-002
 → PROB-CARRY-002
+→ PROB-CARRY-SATURATION-003 (only if v1.2 controlled exception is needed)
 → PROB-FRAGILITY-002
 → STATE-CHURN-002
 ```
 
 逐项施工。任一项触发新合同停止条件时仍须立即停止。
+
+`PROB-CARRY-002` 的第一版正式重建随后以 +34.67% Brier Skill、7.413% ECE 失败并停止。第 13.3
+节先完成结果后只读残差审计，2026-08-23 的人类决定再以合同 v1.2 只授权一个替换式 bounded-age
+候选：cap=20、不改任何门槛、不扫描、不读价格、只正式重建一次。当前顺序因此临时收窄为：
+
+```text
+PROB-CARRY-SATURATION-003
+→ PASS: PROB-FRAGILITY-002
+→ FAIL: CONTRACT_STOP / NO_THIRD_CARRY_ATTEMPT
+```
 
 ---
 
@@ -334,7 +347,8 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - station acceptance criterion：duration 不跨 UNKNOWN；两窗方向不系统反转；正式 published OOF
   同时满足 Skill≥2%、ECE≤7%，且 reliability 不倒置。
 - economic relevance：可能改善 Carry 风险识别，但未读取价格，不能声称改善 Short 风险。
-- status：`IMPLEMENTED / FORMAL_HISTORICAL_REPLAY_FAIL_ECE / CONTRACT_STOP`
+- status：`IMPLEMENTED / FORMAL_HISTORICAL_REPLAY_FAIL_ECE / CONTRACT_STOP_RECORDED /
+  V1_2_EXCEPTION_ONLY`
 
 ### 9.3 `PROB-BROAD-002`
 
@@ -453,11 +467,12 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
   新 calibrator/window/model、同时保留 bounded/unbounded age、外部特征包。
 - affected existing files：若合同授权，仅涉及 Carry duration fact、唯一 predictor 配置、重放完整性
   验收与聚焦测试；不改变标签、horizon、eligibility、模型或校准器。
-- semantic/version impact：当前仅为审计缺陷；需要合同 v1.2 纯文档提交后才能修改语义代码。
+- semantic/version impact：合同 v1.2 与本节已以纯文档冻结唯一替换语义；现有 V3
+  feature/probability/schema/model/package 版本仍为 3.0.0。
 - station acceptance criterion：原 252/20/20、Brier Skill≥2%、ECE≤7% 与可靠性门一字不改；
   development/confirmation 及 spell 集中度必须并列报告；若唯一正式重建失败则停止，不得第三次尝试。
 - economic relevance：仅修复气象站概率；阶段 D 前仍不得读取产品价格或运行经济探针。
-- status：`AUDIT_CONFIRMED_RESIDUAL / CONTRACT_AMENDMENT_REQUIRED / NOT_IMPLEMENTED`
+- status：`AUDIT_CONFIRMED_RESIDUAL / V1_2_SPEC_FROZEN / IMPLEMENTATION_AUTHORIZED_ONCE`
 
 ---
 
@@ -506,8 +521,9 @@ NO_PRODUCTION_PROMOTION
 
 ## 12. 阶段 B：V3 语义与 Schema 冻结
 
-本节由合同 v1.1 授权，是第一行业务语义代码修改前的唯一阶段 B 规格。以下集合、公式、窗口、
-枚举、顺序和失败行为不得根据后续 OOF 或经济结果修改。
+本节最初由合同 v1.1 授权，是第一行业务语义代码修改前的阶段 B 规格。合同 v1.2 只替换第 12.4
+节的 Carry transformed-age 字段并补充一次性失败行为；其余集合、公式、窗口、枚举、顺序和失败
+行为不得根据后续 OOF 或经济结果修改。
 
 ### 12.1 版本与正式事件目录
 
@@ -531,7 +547,7 @@ probability_artifact_contract_version = 2
 | `front_inversion_5d` | 5 | `FEATURE_CONDITIONAL_REQUIRED` | V2 四项不变 |
 | `mid_curve_pressure_accelerates_5d` | 5 | `FEATURE_CONDITIONAL_REQUIRED` | V2 六项不变 |
 | `broad_stress_persists_10d` | 10 | `BASE_RATE_ONLY_EXEMPT` | 无；禁止训练模型 |
-| `carry_environment_recovers_10d` | 10 | `FEATURE_CONDITIONAL_REQUIRED` | V2 六项加两个 duration facts |
+| `carry_environment_recovers_10d` | 10 | `FEATURE_CONDITIONAL_REQUIRED` | V2 六项加 bounded age 与 recovering flag |
 | `calm_carry_breaks_5d` | 5 | `FEATURE_CONDITIONAL_REQUIRED` | 本节冻结四项 |
 
 因此阶段 D 验收对象是五个条件模型与一个 Broad 基准率参考。任何条件模型缺样本或未通过门，
@@ -661,7 +677,7 @@ calibration_method:
 - `NOT_APPLICABLE/UNOBSERVABLE`：所有概率与 calibration 数值均为 null；
 - Broad eligible 行只允许 `BASE_RATE_ONLY` 或 `INSUFFICIENT_HISTORY`。
 
-### 12.4 `PROB-CARRY-002` duration facts
+### 12.4 `PROB-CARRY-SATURATION-003` bounded duration facts
 
 `carry_environment_recovers_10d` 的 onset、eligibility、10-session label、future `OPEN` predicate、
 censoring 与 outcome availability 全部不变。新增字段逐行定义：
@@ -673,7 +689,7 @@ carry_spell_age:
     event_status == UNOBSERVABLE   -> null and hard reset
     a formal-session gap           -> hard reset
 
-log1p_carry_spell_age = log(1 + carry_spell_age)
+bounded_log1p_carry_spell_age = log(1 + min(carry_spell_age, 20))
 
 carry_recovering_flag:
     ELIGIBLE and carry_environment_state == RECOVERING -> 1.0
@@ -690,12 +706,18 @@ p_neg_d5_near_stress
 p_d5_f4_f7_slope30
 p_neg_d5_log_f4_f7_level
 shock_scaled
-log1p_carry_spell_age
+bounded_log1p_carry_spell_age
 carry_recovering_flag
 ```
 
-不得加入 SPX、VVIX、VRP、VIX9D convergence 或新的 hazard/survival library。模型仍称为
-`DURATION_CONDITIONED_FIXED_10D_LOGISTIC`。
+原 `log1p_carry_spell_age` 被替换，不得与 bounded 字段同时存在于 runtime state、配置、模型
+fingerprint 或验收列中。20 来自阶段 A 预冻结 `11–20 / 21–60` 分箱边界，不允许扫描。不得加入
+SPX、VVIX、VRP、VIX9D convergence 或新的 hazard/survival library。标签、horizon、eligibility、
+Logistic、regularization、rolling fit、校准、purge、252/20/20、Skill≥2% 与 ECE≤7% 全部不变；
+模型仍称为 `DURATION_CONDITIONED_FIXED_10D_LOGISTIC`。
+
+只允许一次正式全历史/OOF 重建。通过只记 `HISTORICAL_RESEARCH_SUPPORT` 并进入下一 defect；
+失败即 `CONTRACT_STOP`，不得尝试其他 cap、惩罚、feature、model、window 或 calibrator。
 
 ### 12.5 `PROB-FRAGILITY-002` 正式事件
 
@@ -834,11 +856,12 @@ ECE <= 7%
 
 ```text
 STAGE_B_SEMANTICS_FROZEN
-PROB-CAL-002_IMPLEMENTATION_AUTHORIZED
-PROB-CARRY-002_IMPLEMENTATION_AUTHORIZED
-PROB-FRAGILITY-002_IMPLEMENTATION_AUTHORIZED
-STATE-CHURN-002_IMPLEMENTATION_AUTHORIZED_LIMITED
-PROB-BROAD-002_CLOSED_BASE_RATE_ONLY
+PROB-CAL-002=PASS
+PROB-CARRY-002=FORMAL_FAIL_ECE_RECORDED
+PROB-CARRY-SATURATION-003=IMPLEMENTATION_AUTHORIZED_ONCE
+PROB-FRAGILITY-002=BLOCKED_PENDING_CARRY_SATURATION_RESULT
+STATE-CHURN-002=BLOCKED_PENDING_CARRY_SATURATION_RESULT
+PROB-BROAD-002=BASE_RATE_REFERENCE_PASS
 STAGE_D_NOT_RUN
 ADAPTER_BLOCKED
 ECONOMIC_PROBE_BLOCKED
@@ -990,12 +1013,13 @@ Q1 是明确残差但不是全部误差。即使反事实地把 Q1 修到零误�
 
 age 61+ 的 42 行全部来自同一 spell；最低 quintile 也只有两个 spell。故这里没有足够证据授权
 灵活 spline、分段惩罚或搜索 cap。唯一仍可治理的最小候选是复用阶段 A 预先存在的 20-session
-边界做物理饱和，并用原门槛接受或拒绝。当前裁决仍是：
+边界做物理饱和，并用原门槛接受或拒绝。合同 v1.2 现已完成纯文档冻结，当前裁决是：
 
 ```text
 PROB-CARRY-002=FAIL_ECE
-PROB-CARRY-SATURATION-003=AUDIT_CONFIRMED_RESIDUAL
-IMPLEMENTATION=NOT_AUTHORIZED_UNTIL_PURE_DOC_CONTRACT_V1_2
+PROB-CARRY-SATURATION-003=SPEC_FROZEN_IMPLEMENTATION_AUTHORIZED_ONCE
+FORMAL_REBUILD_BUDGET=ONE
+THRESHOLDS_AND_MODEL=UNCHANGED
 PRODUCT_PRICES_READ=FALSE
 ECONOMIC_PROBE=NOT_RUN
 ```
