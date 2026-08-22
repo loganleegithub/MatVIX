@@ -5,7 +5,7 @@
 > 基线提交：`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`
 > 历史范围：`2013-05-20` 至 `2026-08-20`，3,334 个正式 session
 > 审计日期：2026-08-22
-> 状态：PHASE_A_COMPLETE / DEFECTS_OPEN / NO_SEMANTIC_CODE_CHANGED
+> 状态：PHASE_A_COMPLETE / PHASE_B_SPEC_FROZEN / NO_SEMANTIC_CODE_CHANGED
 
 ## 1. 结论先行
 
@@ -17,11 +17,11 @@ V1 仍有五项阻断 V2 的业务缺陷：
 
 | defect_id | severity | layer | 一句话结论 | status |
 |---|---|---|---|---|
-| `DATA-001` | P0 | DATA | 严格 30 日 `VXCM30` 在完整 F1–F7 仍可得时周期性失去左夹逼锚，162 个直接缺口传播为 329 个 5 日特征缺口 | OPEN |
-| `TENOR-001` | P1 | TENOR | V1 没有直接发布 F4–F7 level/slope/breadth/change，`Persistence` 不能回答中期限当前处于扩散、已计价还是衰减 | OPEN |
-| `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | OPEN |
-| `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | OPEN |
-| `PROBABILITY-001` | P1 | PROBABILITY | 概率流水线完整，但现有 broad/repair 标签不是直接 F4–F7 扩散与 carry 恢复问题，两个模型也未提供可发布增量 | OPEN |
+| `DATA-001` | P0 | DATA | 严格 30 日 `VXCM30` 在完整 F1–F7 仍可得时周期性失去左夹逼锚；162 个直接缺口令 324 个 5 日变化不可用，另有 5 个合法 warm-up null | SPEC_FROZEN |
+| `TENOR-001` | P1 | TENOR | V1 没有直接发布 F4–F7 level/slope/breadth/change，`Persistence` 不能回答中期限当前处于扩散、已计价还是衰减 | SPEC_FROZEN |
+| `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | SPEC_FROZEN |
+| `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | SPEC_FROZEN |
+| `PROBABILITY-001` | P1 | PROBABILITY | 概率流水线完整，但现有 broad/repair 标签不是直接 F4–F7 扩散与 carry 恢复问题，两个模型也未提供可发布增量 | SPEC_FROZEN |
 
 本审计没有读取任何产品价格，没有生成收益、仓位、策略、HTML、V1.1 路径，也没有读取
 `/Users/logan/MatVIX_cleanup_quarantine/`。旧 Research Shadow 数字没有作为预期答案或证据。
@@ -80,8 +80,8 @@ outputs/v2_audit/business_audit_summary.json
 
 - 162 个 session 的 F1–F7 全部存在，但 `D1>30`，所以 `D_a <= 30 < D_b` 找不到左锚；
 - 这些不是原始文件、解析、正值过滤或合约资格缺口，而是 V1 严格公式的定义域缺口；
-- 162 个 `VXCM30/basis30_eod` 直接缺口使 `d5_log_vxcm30/d5_basis30_eod` 共 329 行不可用，
-  其中 167 行是额外传播；
+- 162 个 `VXCM30/basis30_eod` 直接缺口使 `d5_log_vxcm30/d5_basis30_eod` 的 324 行不可用
+  （当日 162 行及其 t+5 传播 162 行）；全列另有开头 5 个合法 warm-up null，因此现状总计 329 行；
 - 缺口时 `D1-30` 的最大值为 5.7083 日，每个缺口都能由同日正值 F1/F2 形成小幅、有界后向线性候选。
 
 伪缺口检验独立地在本来有严格 F1/F2 夹逼的日期隐藏 F1，改用 F2/F3 后向估计 30 日值：
@@ -204,15 +204,15 @@ eligibility 和 censoring，之后仍按原门槛决定 `CALIBRATED_MODEL / BASE
 defect_id: DATA-001
 severity: P0
 layer: DATA
-observed symptom: 完整 F1–F7 存在时，162 个 session 的 VXCM30/basis30_eod 仍不可用；5 日传播共影响 329 行。
+observed symptom: 完整 F1–F7 存在时，162 个 session 的 VXCM30/basis30_eod 仍不可用；它们令 324 个 5 日变化不可用，另有 5 个合法 warm-up null。
 reproduction command: .venv/bin/python -m matvix audit-v2 --project-dir .
 causal evidence: 所有缺口均 D1>30，F1–F7 连续、正值、正式 vintage，V1 选择与独立重算一致；根因是严格夹逼定义域没有左锚。
 business consequence: 周期性 UNKNOWN/PARTIAL、Carry/score/state/probability eligibility 中断，并把单日定义域缺口传播到后续 5-session 特征。
 minimal repair: V2 仅在 30<D1<=36、F1/F2 连续正值且 PIT/method 合法时采用同曲线有界线性后向估计；显式标记 reconstructed source kind 和方法版本；其他情况保持不可用。
 affected existing files: src/matvix/features/futures_curve.py; src/matvix/features/builder.py; configs/features_v1.yaml（V2 就地替换时改名/升版）; src/matvix/output.py; schemas/daily_output.schema.json; 公式与 PIT 测试。
 semantic/version impact: feature/schema/model 相关语义升为 2.0.0；不得改写 V1 冻结产物，不建立 V1/V2 双路径。
-station acceptance criterion: 162 个定义域缺口均被可审计方法覆盖或严格降级；开发/确认伪缺口分别满足冻结误差门；direct/reconstructed/unavailable 不混淆；329 行传播按公式消除；未来追加不改变过去。
-status: OPEN
+station acceptance criterion: 162 个定义域缺口均被可审计方法覆盖或严格降级；开发/确认伪缺口分别满足冻结误差门；direct/reconstructed/unavailable 不混淆；324 个缺陷相关 d5 null 按公式消除且只保留 5 个合法 warm-up null；未来追加不改变过去。
+status: SPEC_FROZEN
 ```
 
 ### TENOR-001
@@ -229,7 +229,7 @@ minimal repair: 增加最小 F4–F7 level、30-day normalized slope、inversion
 affected existing files: src/matvix/features/futures_curve.py; src/matvix/features/builder.py; src/matvix/state/scores.py; configs/features_v1.yaml; configs/state_v1.yaml; output/schema/tests。
 semantic/version impact: feature/state/schema/model 语义升为 2.0.0；删除被替代的旧 Persistence 混合含义，不保留双实现。
 station acceptance criterion: 新字段公式、单位、换月、缺失、PIT 可重放；四种期限阶段有不同 F4–F7 事实；开发/确认条件方向不系统反转；危机留一方向稳定或诚实拒绝该字段。
-status: OPEN
+status: SPEC_FROZEN
 ```
 
 ### STATE-001
@@ -246,7 +246,7 @@ minimal repair: 分别冻结 stress_tenor_scope、mid_curve_pressure_state、car
 affected existing files: src/matvix/state/scores.py; src/matvix/state/ontology.py; src/matvix/state/transitions.py; configs/state_v1.yaml; narrative/output/schema/tests。
 semantic/version impact: state/schema/model 语义升为 2.0.0；稳定接口字段名可保留，但含义改变必须在 V2 规格逐项写明。
 station acceptance criterion: answer/phase 互斥、完整、确定重放并传播 UNKNOWN；相同直接 tenor 事实不会映射为相互冲突状态；Repair 与 carry OPEN 有独立字段和验收。
-status: OPEN
+status: SPEC_FROZEN
 ```
 
 ### TIMING-001
@@ -263,7 +263,7 @@ minimal repair: 在 STATE-001 的直接事实与独立 event ledger 上重写最
 affected existing files: src/matvix/state/ontology.py; src/matvix/state/transitions.py; configs/state_v1.yaml; station acceptance tests/module。
 semantic/version impact: state/model 语义升为 2.0.0；任何 hysteresis 变化必须归属本 defect，不建设通用状态治理框架。
 station acceptance criterion: 相对冻结 V1，原始事件簇漏报不增、中位首次预警不晚、误报簇不增；Repair 延迟下降且过早释放不增；churn 改善不能延长关闭。
-status: OPEN
+status: SPEC_FROZEN
 ```
 
 ### PROBABILITY-001
@@ -280,7 +280,7 @@ minimal repair: 保留通过且业务问题清楚的 acute/front-inversion；仅
 affected existing files: src/matvix/constants.py; src/matvix/probability/targets.py; src/matvix/probability/walk_forward.py; src/matvix/probability/engine.py; configs/probability_v1.yaml; output/schema/tests。
 semantic/version impact: probability/schema/model 语义升为 2.0.0；正式事件集合整体替换，不保留 V1/V2 并行开关。
 station acceptance criterion: 标签/eligibility/purge/OOF/校准算术可重放；CENSORED 保持严格；FEATURE_CONDITIONAL 继续要求 Brier Skill>=2%、ECE<=7%及样本门；未达标新事件不留半成品字段。
-status: OPEN
+status: SPEC_FROZEN
 ```
 
 ## 5. 非缺陷与明确拒绝
@@ -297,4 +297,6 @@ status: OPEN
 阶段 A 已完成：逐 session 账本、机器汇总、五维人工结论和五个 defect_id 已形成。下一步只能先
 在 `MATVIX_PRE_DEVELOPMENT_REPORT.md` 冻结 V2 数据、公式、answer/phase/UNKNOWN、事件、Schema
 与版本 delta，并以纯文档提交结束阶段 B。该提交之前，不得修改运行配置或任何业务语义代码；
-阶段 B 完成后才允许从 `DATA-001` 开始逐 defect 施工。
+阶段 B 已完成：V2 数据、公式、answer/phase/UNKNOWN、事件、Schema 与版本 delta 已在
+`MATVIX_PRE_DEVELOPMENT_REPORT.md` 第 21 节冻结。下一步只允许从 `DATA-001` 开始，按固定顺序
+逐 defect 施工；每个 defect 在实现、聚焦测试、完整站内回归和证据更新完成前不得标记 CLOSED。

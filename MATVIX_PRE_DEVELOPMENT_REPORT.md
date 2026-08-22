@@ -1646,3 +1646,482 @@ MatVIX v1 完成，必须同时满足：
 ```
 
 必要的可复现性服务于这条业务链，不能反过来吞掉项目。MatVIX 的成败最终取决于：它是否能用期权保险市场自己的价格语言，稳定解释“现在发生了什么”，并对“接下来哪种状态转移更可能发生”给出有基准、有校准、可被检验的概率判断。
+
+---
+
+## 21. MATVIX_CBOE_CORE_V2 冻结语义增量
+
+### 21.1 适用范围与替换规则
+
+本节是 `MATVIX_V2_CONSTRUCTION_PLAN.md` 阶段 B 的冻结结果，只定义 V2 相对本文 V1 的
+语义增量。它只修复 `DATA-001`、`TENOR-001`、`STATE-001`、`TIMING-001` 和
+`PROBABILITY-001`；未被本节明确替换的 V1 PIT、三值逻辑、删失、rolling-origin、purge、
+校准和发布真值表继续有效。
+
+V2 是就地替换，不是并行产品：
+
+- `MODEL_ID = MATVIX_CBOE_CORE_V2`；
+- package、Schema、feature、state、probability version 最终均为 `2.0.0`；
+- `features_v1.yaml`、`state_v1.yaml`、`probability_v1.yaml` 在各自 defect 提交中分别改名为
+  `features_v2.yaml`、`state_v2.yaml`、`probability_v2.yaml`，旧路径删除；
+- 不允许 `_v1/_v2` 双实现、版本分支、兼容 normalization layer 或 V1.1 可运行路径；
+- 分支中间提交不得发布；只有五个 defect 全部关闭、V2 全量重建和阶段 D 验收通过后，
+  `MATVIX_CBOE_CORE_V2` 才是可接受输出。
+
+开发窗固定为 `session_date <= 2021-12-31`，确认窗固定为
+`session_date >= 2022-01-03`。所有阈值只来自阶段 A 的气象站事实审计；没有读取或使用任何
+交易产品价格、仓位、收益或损失。
+
+### 21.2 DATA-001：F1–F7 与 VXCM30 V2
+
+V2 每个 session 必须按现有 PIT、标准月和 final settlement 资格规则选择连续 F1–F7。
+七个合约均必须满足：
+
+```text
+settle > 0
+D1 < D2 < ... < D7
+contract_month(Fi+1) 是 contract_month(Fi) 的下一标准月
+available_at <= decision_as_of
+vintage_kind ∈ {OBSERVED_PIT, ASSUMED_PIT}
+```
+
+`VXCM30` 只允许下列三种 source kind：
+
+```text
+DIRECT_BRACKET_INTERPOLATION
+BOUNDED_BACKWARD_EXTRAPOLATION
+UNAVAILABLE
+```
+
+若存在唯一相邻锚 `Fa,Fb` 满足 `Da <= 30 < Db`，使用直接线性插值：
+
+```text
+VXCM30 = Fa + (Fb-Fa) * (30-Da)/(Db-Da)
+source_kind = DIRECT_BRACKET_INTERPOLATION
+```
+
+若不存在左锚，只在以下条件全部成立时允许同曲线有界后向估计：
+
+```text
+30 < D1 <= 36
+F1,F2 > 0
+D2 > D1
+F1/F2 为连续标准月
+两锚均通过正式 PIT/vintage 门
+```
+
+公式固定为：
+
+```text
+VXCM30 = F1 + (F2-F1) * (30-D1)/(D2-D1)
+source_kind = BOUNDED_BACKWARD_EXTRAPOLATION
+```
+
+其他情况一律 `VXCM30=null`、`source_kind=UNAVAILABLE`，不允许 0、前填、可选字段兜底或
+无界外推。两种可用 source kind 都属于统一方法
+`VXCM30_LINEAR_30D_V2`；source kind 必须逐行保留，但不得把重建日隔离成一个稀疏 percentile
+方法族。重建值是正式准入的派生值，不得称为交易所直接 observation，并继承两锚中较弱的
+vintage 证据。
+
+有界方法的固定准入门在开发窗和确认窗分别计算，两个窗口都必须同时满足：
+
+```text
+development samples >= 250
+confirmation samples >= 150
+abs(bias) <= 0.15 VIX point
+MAE <= 0.15 VIX point
+median absolute percentage error <= 1.00%
+P95 absolute percentage error <= 2.00%
+max absolute percentage error <= 5.00%
+correlation >= 0.995
+```
+
+伪缺口方法固定为：在本来有 F1/F2 直接夹逼的日期隐藏 F1，以 F2/F3 后向估计，并仅纳入
+`0 <= D2-30 <= 6` 的样本。任一分窗失败时，V2 不得把有界估计计为正式可用。
+
+### 21.3 TENOR-001：直接 F4–F7 事实
+
+V2 新增并发布以下逐 session 事实；`Fi` 是 settle，`Di` 是距 final settlement 的日数：
+
+```text
+front_curve_level = mean(F1,F2)                                      # VIX points
+f4_f7_level = mean(F4,F5,F6,F7)                                     # VIX points
+f4_f7_slope30 = ln(F7/F4) * 30/(D7-D4)                              # 30-day log slope
+f4_f7_inversion_share = (I(F4>F5)+I(F5>F6)+I(F6>F7))/3              # [0,1]
+front_to_mid_log_ratio = ln(f4_f7_level/front_curve_level)           # log ratio
+dH_log_f4_f7_level = ln(f4_f7_level_t/f4_f7_level_{t-H})             # H=5,10
+dH_f4_f7_slope30 = f4_f7_slope30_t-f4_f7_slope30_{t-H}              # H=5,10
+dH_f4_f7_inversion_share = share_t-share_{t-H}                       # H=5,10
+```
+
+任一所需锚缺失、非正、顺序非法或 vintage 非正式时，相关事实为 null；不跨缺口前填。
+`p_f4_f7_level` 及下列 percentile 均沿用 756-session reference、504 valid minimum、排除当日、
+按 feature methodology 隔离的 rolling midrank：
+
+```text
+p_f4_f7_level
+p_neg_f4_f7_slope30
+p_d5_log_f4_f7_level
+p_neg_d5_log_f4_f7_level
+p_d5_f4_f7_slope30
+p_neg_d5_f4_f7_slope30
+```
+
+同一正负变换的 percentile 必须满足 midrank 互补关系，不能各自使用不同历史窗。
+
+V2 的 `Persistence` score 被直接期限事实替换，其他四轴的角色不变：
+
+```text
+Persistence = 100 * (
+    0.40*p_f4_f7_level
+  + 0.30*p_neg_f4_f7_slope30
+  + 0.20*p_d5_log_f4_f7_level
+  + 0.10*f4_f7_inversion_share
+)
+```
+
+旧 `fvol_30_93/fvol_93_184` 仍可作为透明诊断事实，但不再构成 Persistence score、
+Persistence answer 或中期限事件标签。Repair score 的最后 10% 从
+`p_neg_d5_fvol_30_93` 替换为 `p_neg_d5_log_f4_f7_level`；这仍是边际修复轴，不是 carry 开放轴。
+
+### 21.4 STATE-001：三个结构事实与六个答案
+
+#### 21.4.1 中期限压力状态
+
+以下谓词只读取当日及此前事实：
+
+```text
+priced_t = p_f4_f7_level >= 0.75 OR f4_f7_inversion_share >= 2/3
+rising_t = d5_log_f4_f7_level > 0
+           AND (d5_f4_f7_slope30 < 0 OR d5_f4_f7_inversion_share > 0)
+prior_priced_10_t = any(priced_{t-10},...,priced_{t-1})
+receding_t = prior_priced_10_t
+             AND d5_log_f4_f7_level < 0
+             AND (d5_f4_f7_slope30 > 0 OR d5_f4_f7_inversion_share < 0)
+```
+
+`mid_curve_pressure_state` 以固定优先级唯一映射：
+
+```text
+RECEDING  if receding_t
+PRICED    else if priced_t
+RISING    else if rising_t
+QUIET     else
+UNKNOWN   if 任一判定所需输入不可得
+```
+
+`RECEDING` 的优先级高于 `PRICED`，使“高位但正在衰减”不会被静态 level 阈值吞掉。
+
+#### 21.4.2 压力期限范围
+
+```text
+front_pressure_t = near_stress_log_ratio > 0 OR front_slope30 < 0
+mid_pressure_t = mid_curve_pressure_state in {RISING, PRICED}
+
+stress_tenor_scope =
+    BROAD   if front_pressure_t AND mid_pressure_t
+    MID     if NOT front_pressure_t AND mid_pressure_t
+    FRONT   if front_pressure_t AND NOT mid_pressure_t
+    NONE    otherwise
+    UNKNOWN if front 或 mid 判定不可得
+```
+
+`FRONT`、`MID`、`BROAD` 是当前范围，不承诺未来继续扩散，也不是任何产品方向。
+
+#### 21.4.3 carry 环境
+
+```text
+carry_open_day_t =
+    front_slope30 > 0
+    AND basis30_eod > 0
+    AND near_stress_log_ratio <= 0
+    AND f4_f7_slope30 > 0
+    AND mid_curve_pressure_state == QUIET
+
+carry_environment_state =
+    OPEN        if carry_open_day_t AND carry_open_day_{t-1}
+    RECOVERING  else if carry_open_day_t OR mid_curve_pressure_state == RECEDING
+    CLOSED      otherwise
+    UNKNOWN     if 当日判定所需输入不可得
+```
+
+前一日未知而当日 `carry_open_day=true` 时只能为 `RECOVERING`，不能越过连续确认成为 `OPEN`。
+
+#### 21.4.4 persistence、carry 与 repair answer
+
+定义：
+
+```text
+broad_pressure_day_t = stress_tenor_scope == BROAD
+                       AND mid_curve_pressure_state in {RISING, PRICED}
+broad_pressure_now_t = 最近 5 个 session（含当日）至少 3 日 broad_pressure_day=true
+recent_stress_t = 最近 10 个 session（含当日）任一日
+                  (stress_tenor_scope != NONE OR hard_acute=true)
+```
+
+窗口使用三值阈值逻辑：已知 TRUE 足以满足则 TRUE，未知也不可能满足则 FALSE，否则 UNKNOWN；
+开头缺少的前史按 UNKNOWN，不按 FALSE。
+
+`persistence_answer`：
+
+```text
+PERSISTENT       if broad_pressure_now=true
+DIFFUSING        else if scope=BROAD AND mid_state=RISING
+FRONT_LOCALIZED  else if scope=FRONT
+NORMAL           else if scope=NONE AND mid_state=QUIET
+MIXED            otherwise
+UNKNOWN          if 所需结构事实或窗口不能确定
+```
+
+`carry_answer`：
+
+```text
+SUPPORTIVE  if carry_environment_state=OPEN
+INVERTED    else if front_slope30 < 0
+STRESSED    else if carry_environment_state=CLOSED
+MIXED       else if carry_environment_state=RECOVERING
+UNKNOWN     if carry 环境或 front slope 不可确定
+```
+
+Shock 与 Tail answer 的 V1 阈值不变。Repair 明确只回答边际衰减：
+
+```text
+repair_confirmed = (mid_curve_pressure_state == RECEDING)
+repair_answer =
+    CONFIRMED  if repair_confirmed=true
+    BUILDING   else if recent_stress=true AND repair_score>=60
+    INACTIVE   else if 上述条件可确定为 false
+    UNKNOWN    otherwise
+```
+
+`Repair=CONFIRMED` 不推出 `carry=SUPPORTIVE`；后者只能来自独立的两日 `OPEN`。
+
+#### 21.4.5 phase 与 UNKNOWN
+
+V2 raw phase 按以下优先级唯一映射：
+
+```text
+UNKNOWN                       if data_status != OK 或三个结构事实任一 UNKNOWN
+ACUTE_FRONT_STRESS            if hard_acute=true
+BROAD_PERSISTENT_STRESS       if persistence=PERSISTENT
+PRESSURE_DIFFUSING            if persistence=DIFFUSING
+REPAIR_IN_PROGRESS            if repair=CONFIRMED
+FRONT_LOCALIZED_STRESS        if persistence=FRONT_LOCALIZED
+TAIL_RICH_QUIET_CURVE         if carry=SUPPORTIVE, shock=CALM,
+                                 persistence=NORMAL, tail in {RICH,EXTREME}
+CARRY_SUPPORTIVE_LOW_STRESS   if carry=SUPPORTIVE, shock=CALM,
+                                 persistence=NORMAL
+MIXED_TRANSITION              otherwise
+```
+
+删除 `PRESSURE_BUILDING` 和未启用的 `CALENDAR_LOCALIZED_PREMIUM`。新增
+`PRESSURE_DIFFUSING`、`FRONT_LOCALIZED_STRESS`。V2 不再对所有 phase 使用通用两日滞回；
+确认放在产生事实的窗口内。唯一 phase 级滞回是 acute release：从
+`ACUTE_FRONT_STRESS` 退出必须连续两个 OK session 同时满足 `hard_acute=false` 且
+`shock_score<75`；UNKNOWN 立即发布并清空 release streak，其他进入和转换当日发布。
+`candidate_phase/candidate_streak` 从正式 Schema 删除。
+
+### 21.5 TIMING-001：冻结事件账本与比较口径
+
+阶段 D 必须独立重算与阶段 A 同义的原始 event ledger，连续 TRUE session 聚类：
+
+```text
+acute_front_pressure = 三项中至少两项：
+    near_stress_log_ratio>0;
+    F1>F2;
+    d1_log_vix >= 开发窗固定 P90
+front_inversion = F1>F2
+mid_curve_diffusion = scope=BROAD AND mid_state=RISING
+broad_stress = scope=BROAD AND mid_state in {RISING,PRICED}
+mid_pressure_receding = mid_state=RECEDING
+carry_recovered = carry_environment_state=OPEN
+```
+
+开发窗固定 P90 为 `0.08682081005241665`：它只从完整开发窗的正式 `d1_log_vix` 一次计算，
+不得在确认窗重估或按产品结果调整。V2 信号口径为：
+
+```text
+acute_front_pressure -> hard_acute
+front_inversion -> carry_answer=INVERTED
+mid_curve_diffusion -> V2 scope/mid_state 的同名直接事实
+broad_stress -> V2 scope/mid_state 的同名直接事实
+mid_pressure_receding -> repair_answer=CONFIRMED
+carry_recovered -> carry_environment_state=OPEN
+```
+
+匹配窗口与阶段 A 一致：acute/front/diffusion/receding 为前后 5 session，broad/carry 为前后
+10 session。报告真簇、信号簇、漏报簇、误报簇、首次延迟、风险关闭持续时间、Repair 延迟、
+过早释放、carry 恢复后继续关闭日数及 leave-one-cluster-out。不得用 phase 自标，也不得用
+产品盈亏定义严重度。
+
+### 21.6 PROBABILITY-001：V2 正式事件集合
+
+V2 事件顺序和正式 Schema 固定为：
+
+```text
+acute_front_stress_5d
+front_inversion_5d
+mid_curve_pressure_accelerates_5d
+broad_stress_persists_10d
+carry_environment_recovers_10d
+```
+
+删除 `broad_persistent_stress_20d` 和 `fast_repair_5d`。审计候选
+`front_stress_diffuses_to_mid_curve_10d` 因开发/确认窗各自样本均不足 252 且与直接
+acceleration/persistence 问题重叠，被拒绝，不进入字段、配置或 Dashboard。
+
+五个事件的 onset、future predicate 和 label 固定如下。future window 都严格为
+`t+1...t+H`，不含当日；只有完整 H 个正式可观察 future predicate 才能形成
+`OBSERVED_0/OBSERVED_1`，否则 `CENSORED`。正例即使提前发生，也要等窗口末日
+`decision_as_of` 才可供训练。
+
+| event_id | onset/ELIGIBLE | H | future predicate | label=1 |
+|---|---|---:|---|---|
+| `acute_front_stress_5d` | `hard_acute=false` | 5 | `hard_acute=true` | 未来任一日 TRUE |
+| `front_inversion_5d` | `front_slope30>=0` | 5 | `front_slope30<0` | 未来任一日 TRUE |
+| `mid_curve_pressure_accelerates_5d` | `mid_state in {QUIET,RECEDING}` | 5 | `mid_state=RISING` | 未来任一日 TRUE |
+| `broad_stress_persists_10d` | `broad_pressure_day=true` | 10 | `broad_pressure_day=true` | 未来至少 5 日 TRUE |
+| `carry_environment_recovers_10d` | `carry_state in {CLOSED,RECOVERING}` 且 `front_pressure=true OR mid_state!=QUIET` | 10 | `carry_state=OPEN` | 未来任一日 TRUE |
+
+onset 已为 false 时是 `NOT_APPLICABLE`；onset 或任一模型输入不可观察时是 `UNOBSERVABLE`，
+不得进入负例。各 predicate 使用自身 formal-vintage flag，不让无关可选序列删失标签。
+
+Logistic predictors 顺序固定为：
+
+```text
+acute_front_stress_5d:
+  carry_risk_scaled, shock_scaled, tail_price_scaled,
+  persistence_scaled, score_change5_scaled, front_confirmation_scaled
+
+front_inversion_5d:
+  p_neg_front_slope30, p_neg_d5_front_slope30,
+  p_neg_basis30_eod, shock_scaled
+
+mid_curve_pressure_accelerates_5d:
+  p_f4_f7_level, p_d5_log_f4_f7_level,
+  p_neg_d5_f4_f7_slope30, f4_f7_inversion_share,
+  shock_scaled, score_change5_scaled
+
+broad_stress_persists_10d:
+  p_f4_f7_level, p_neg_f4_f7_slope30,
+  f4_f7_inversion_share, p_d5_log_f4_f7_level,
+  shock_scaled, score_change5_scaled
+
+carry_environment_recovers_10d:
+  repair_scaled, p_d5_front_slope30, p_neg_d5_near_stress,
+  p_d5_f4_f7_slope30, p_neg_d5_log_f4_f7_level, shock_scaled
+```
+
+Logistic、BaseRate、Platt、20-session purge、252/30/30 训练门、504 calibration max、
+20/20 calibration class 门和 `51/51/50/50/50` 验收分箱保持 V1 算法不变。所有事件全量
+重建 target 和 OOF；不得复用 V1 概率产物。发布 `FEATURE_CONDITIONAL` 仍要求最新 252 条
+完成 OOF 同时满足 `Brier Skill>=2%`、`ECE<=7%` 及既有正负样本门；模型未达标但标签、
+样本和流水线完整时诚实发布 `BASE_RATE_ONLY`，不得称为概率增量。若新事件的 label、PIT、
+样本完整性或可重放性失败，则该 defect 不能关闭，不能留下半成品字段。
+
+### 21.7 V2 输出 Schema
+
+每日 JSON 必须包含：
+
+```text
+schema_version       = 2.0.0
+model_id             = MATVIX_CBOE_CORE_V2
+feature_version      = 2.0.0
+state_version        = 2.0.0
+probability_version  = 2.0.0
+```
+
+`observations.vx_contract_ids/vx_settles/vx_days_to_final` 从六锚改为七锚。新增必需对象：
+
+```json
+"market_story": {
+  "structure": {
+    "stress_tenor_scope": "NONE|FRONT|MID|BROAD|UNKNOWN",
+    "mid_curve_pressure_state": "QUIET|RISING|PRICED|RECEDING|UNKNOWN",
+    "carry_environment_state": "OPEN|CLOSED|RECOVERING|UNKNOWN"
+  }
+}
+```
+
+稳定接口字段名 `session_date`、`decision_as_of`、`data_status`、
+`market_story.answers.carry/shock/persistence` 保留；其 V2 枚举含义以本节为准。
+`diagnostics` 至少新增并逐行保留：
+
+```text
+vxcm30_source_kind
+vxcm30_methodology
+front_curve_level
+f4_f7_level
+f4_f7_slope30
+f4_f7_inversion_share
+front_to_mid_log_ratio
+d5/d10 三组 F4–F7 change
+p_f4_f7_level 及本节列出的 percentile
+front_pressure
+broad_pressure_day
+broad_pressure_now
+carry_open_day
+```
+
+`probability_judgment` 只允许并要求第 21.6 节五个事件。旧事件 key、旧 phase、
+`candidate_phase/candidate_streak` 不得出现在 V2 payload。Parquet、API、JSON 和现有 Dashboard
+必须来自同一 row/payload，并通过同一 Schema；只做必要兼容，不新增 renderer 或发布框架。
+
+### 21.8 按 defect 的冻结站内验收准则
+
+`DATA-001`：
+
+- 162 个阶段 A 定义域缺口全部变为显式 bounded source 或严格 unavailable；预期当前包为
+  162 个 bounded、0 个该类 unavailable；
+- 324 个缺陷相关 d5 null 按确定公式消除，只保留开头 5 个合法 warm-up null，不能用前填消除；
+- 开发/确认伪缺口分别通过第 21.2 节全部固定门；
+- direct/bounded/unavailable、vintage 和方法逐行可审计；未来追加不改变过去。
+
+`TENOR-001`：
+
+- F1–F7 选择及本节全部公式有独立 golden/手算/换月/缺失测试；
+- 开发窗与确认窗中，`DIFFUSING` 和 `PRICED` 的 d5、d10 level 中位数均为正且 slope-change
+  中位数均为负；`RECEDING` 的 d5、d10 level 中位数均为负且 slope-change 中位数均为正；
+- 每个上述 stage 在每个窗口至少 75 个 session，否则 `INSUFFICIENT_EVIDENCE`；
+- 留一事件簇不出现上述当前方向反转；任何未来分布只作描述，不能改写当前状态为预测。
+
+`STATE-001`：
+
+- 三个结构字段、六个 answer 和 phase 对每个 OK row 唯一完整，对不可判定输入严格 UNKNOWN；
+- `PRESSURE_BUILDING` 不再存在；相同 scope/mid/carry 事实不能映射为冲突答案；
+- `Repair=CONFIRMED` 与 `carry=SUPPORTIVE` 分别可单独成立，不存在逻辑蕴含；
+- phase 确定重放，只有冻结的 acute release 能造成 phase 与 raw phase 暂时不同。
+
+`TIMING-001`：
+
+- 对第 21.5 节每类原始事件，V2 漏报簇不高于 V1、首次信号中位延迟不高于 V1、误报簇
+  不高于 V1；
+- Repair 中位确认延迟必须低于 V1 的 1 session，过早释放率不得高于 4.48%；
+- carry 恢复后稳定接口继续关闭的中位数不得高于 2 session、最大不得高于 23 session；
+- 分别报告 phase 转换和风险关闭持续时间；任何 churn 改善不得靠推迟风险识别或延长关闭。
+
+`PROBABILITY-001`：
+
+- 五个事件逐项通过 label、eligibility、future-vintage、20-session purge、outcome availability、
+  OOF 唯一性、顺序校准和发布算术重放；
+- 末端不完整和未知 predicate 保持 `CENSORED`，`NOT_APPLICABLE` 不进负例；
+- `FEATURE_CONDITIONAL` 逐事件继续通过固定 Brier/ECE/样本门；未通过者诚实
+  `BASE_RATE_ONLY` 且不计为模型增量；
+- 两个旧事件和被拒绝 diffusion 候选在配置、ledger、Schema、JSON、API、Dashboard 中均不存在。
+
+阶段 D 只分别给出 DATA、TENOR、STATE/TIMING、PROBABILITY INTEGRITY、PROBABILITY MODEL
+的 `PASS/FAIL/INSUFFICIENT_EVIDENCE`，不计算总分。只有前四个关键维度全部 `PASS` 才允许
+读取固定经济探针所需的产品价格；`PROBABILITY MODEL` 可以诚实包含 `BASE_RATE_ONLY`，但不得
+把它记作预测增量。
+
+### 21.9 施工提交边界
+
+提交顺序固定为：
+
+```text
+DATA-001 -> TENOR-001 -> STATE-001 -> TIMING-001 -> PROBABILITY-001
+```
+
+每个提交只做该 defect 的失败测试、最小实现、配置同步、必要 Schema 兼容、全站回归和缺陷证据
+更新。不得在这些提交中恢复隔离包、创建策略、经济适配器、HTML 发布框架或 V1.1 路径。
+固定经济探针模块只能在阶段 D 全部关键门通过后创建。
