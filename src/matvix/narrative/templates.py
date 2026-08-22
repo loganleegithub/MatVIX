@@ -136,14 +136,6 @@ def build_narrative(
         + " "
         + AXIS_SENTENCES["repair"][str(row.get("repair_answer", "UNKNOWN"))],
     ]
-    candidate = row.get("candidate_phase")
-    if candidate is not None and not pd.isna(candidate) and str(candidate) != phase:
-        streak = int(row.get("candidate_streak", 0) or 0)
-        sentences.insert(
-            1,
-            f"状态切换仍在确认：当日原始证据指向 {candidate}，已连续 {streak} 日，"
-            f"因此发布阶段暂时保留为 {phase}。",
-        )
     if (
         pd.notna(row.get("shock_score"))
         and float(row["shock_score"]) >= 85

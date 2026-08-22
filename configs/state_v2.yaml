@@ -39,4 +39,6 @@ thresholds:
   broad_pressure_required: 3
   recent_stress_window: 10
   repair_building: 60.0
+  acute_release_shock_max: 75.0
+  acute_release_sessions: 2
   direction_change: 7.5

@@ -226,8 +226,6 @@ def build_daily_output(
         "market_story": {
             "headline": headline,
             "phase": phase,
-            "candidate_phase": _json_value(row.get("candidate_phase")),
-            "candidate_streak": _int_or_zero(row.get("candidate_streak")),
             "pressure_level": str(row.get("pressure_level", "UNKNOWN")),
             "direction": str(row.get("direction", "UNKNOWN")),
             "baseline_score": (

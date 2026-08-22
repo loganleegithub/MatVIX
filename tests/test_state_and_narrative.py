@@ -108,7 +108,7 @@ def test_phase_priority_hard_acute_over_repair() -> None:
     assert out.iloc[-1]["raw_phase"] == "ACUTE_FRONT_STRESS"
 
 
-def test_phase_hysteresis_two_day_candidate() -> None:
+def test_nonacute_phase_changes_publish_immediately_without_candidate_fields() -> None:
     frame = pd.DataFrame(
         {
             "raw_phase": ["CARRY_SUPPORTIVE_LOW_STRESS", "MIXED_TRANSITION", "MIXED_TRANSITION"],
@@ -119,17 +119,20 @@ def test_phase_hysteresis_two_day_candidate() -> None:
     out = apply_phase_hysteresis(frame)
     assert out["phase"].tolist() == [
         "CARRY_SUPPORTIVE_LOW_STRESS",
-        "CARRY_SUPPORTIVE_LOW_STRESS",
+        "MIXED_TRANSITION",
         "MIXED_TRANSITION",
     ]
-    assert out.loc[1, "candidate_phase"] == "MIXED_TRANSITION"
-    assert out.loc[1, "candidate_streak"] == 1
+    assert "candidate_phase" not in out and "candidate_streak" not in out
 
 
 def test_acute_exit_requires_two_consecutive_release_days() -> None:
     frame = pd.DataFrame(
         {
-            "raw_phase": ["ACUTE_FRONT_STRESS", "PRESSURE_BUILDING", "PRESSURE_BUILDING"],
+            "raw_phase": [
+                "ACUTE_FRONT_STRESS",
+                "FRONT_LOCALIZED_STRESS",
+                "FRONT_LOCALIZED_STRESS",
+            ],
             "hard_acute": [True, False, False],
             "shock_score": [90.0, 70.0, 70.0],
         }
@@ -138,21 +141,25 @@ def test_acute_exit_requires_two_consecutive_release_days() -> None:
     assert out["phase"].tolist() == [
         "ACUTE_FRONT_STRESS",
         "ACUTE_FRONT_STRESS",
-        "PRESSURE_BUILDING",
+        "FRONT_LOCALIZED_STRESS",
     ]
 
 
 def test_acute_exit_streak_counts_release_condition_not_raw_phase_identity() -> None:
     frame = pd.DataFrame(
         {
-            "raw_phase": ["ACUTE_FRONT_STRESS", "PRESSURE_BUILDING", "MIXED_TRANSITION"],
+            "raw_phase": [
+                "ACUTE_FRONT_STRESS",
+                "FRONT_LOCALIZED_STRESS",
+                "MIXED_TRANSITION",
+            ],
             "hard_acute": [True, False, False],
             "shock_score": [90.0, 70.0, 60.0],
         }
     )
     out = apply_phase_hysteresis(frame)
     assert out["phase"].tolist() == ["ACUTE_FRONT_STRESS", "ACUTE_FRONT_STRESS", "MIXED_TRANSITION"]
-    assert out.loc[1, "candidate_streak"] == 1
+    assert "candidate_phase" not in out and "candidate_streak" not in out
 
 
 def test_repair_below_building_threshold_is_inactive_despite_unknown_recent_stress() -> None:
@@ -202,7 +209,7 @@ def test_percentile_history_isolated_by_feature_methodology_signature() -> None:
     assert pd.isna(out.loc[6, "p_d1_log_vix"])
 
 
-def test_unknown_clears_candidate_and_recovery_bootstraps() -> None:
+def test_unknown_clears_acute_release_state_and_next_fact_bootstraps() -> None:
     frame = pd.DataFrame(
         {
             "raw_phase": [
@@ -217,7 +224,6 @@ def test_unknown_clears_candidate_and_recovery_bootstraps() -> None:
     )
     out = apply_phase_hysteresis(frame)
     assert out.loc[2, "phase"] == "UNKNOWN"
-    assert out.loc[2, "candidate_streak"] == 0
     assert out.loc[3, "phase"] == "TAIL_RICH_QUIET_CURVE"
 
 
@@ -335,12 +341,10 @@ def test_what_changes_has_one_to_three_items() -> None:
         assert 1 <= len(items) <= 3
 
 
-def test_narrative_explains_hysteresis_when_published_phase_differs_from_candidate() -> None:
+def test_narrative_does_not_publish_removed_candidate_phase_fields() -> None:
     row = base_state_frame(1).iloc[0].copy()
     row["phase"] = "REPAIR_IN_PROGRESS"
     row["repair_answer"] = "BUILDING"
-    row["candidate_phase"] = "MIXED_TRANSITION"
-    row["candidate_streak"] = 1
 
     narrative = build_narrative(
         row,
@@ -351,5 +355,4 @@ def test_narrative_explains_hysteresis_when_published_phase_differs_from_candida
     )
 
     assert "高压后的修复阶段仍在进行" in narrative
-    assert "当日原始证据指向 MIXED_TRANSITION，已连续 1 日" in narrative
-    assert "发布阶段暂时保留为 REPAIR_IN_PROGRESS" in narrative
+    assert "状态切换仍在确认" not in narrative

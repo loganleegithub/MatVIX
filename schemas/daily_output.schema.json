@@ -181,8 +181,6 @@
       "required": [
         "headline",
         "phase",
-        "candidate_phase",
-        "candidate_streak",
         "pressure_level",
         "direction",
         "baseline_score",
@@ -212,16 +210,6 @@
             "CARRY_SUPPORTIVE_LOW_STRESS",
             "MIXED_TRANSITION"
           ]
-        },
-        "candidate_phase": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "candidate_streak": {
-          "type": "integer",
-          "minimum": 0
         },
         "pressure_level": {
           "enum": [

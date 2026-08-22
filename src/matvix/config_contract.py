@@ -39,7 +39,7 @@ _FROZEN = {
     "state_v2.yaml": (
         "version",
         "2.0.0",
-        "733047b19a65b96c6ee13e8bd723931ae3d6a0f341bccaa1914e55e1fa7a5f1d",
+        "04dc52355a41b0cf4ffdb061d04962714e159dbb82a7d80d9a7d5196342be766",
     ),
     "probability_v1.yaml": (
         "version",
@@ -218,6 +218,7 @@ def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
         AXIS_COMPONENTS,
         add_percentiles_and_scores,
     )
+    from matvix.state.transitions import ACUTE_RELEASE_SESSIONS, ACUTE_RELEASE_SHOCK_MAX
 
     _same(errors, "state.version", STATE_VERSION, config["version"])
     for axis, keys in _WEIGHT_KEYS.items():
@@ -247,6 +248,8 @@ def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
         "broad_pressure_required": BROAD_PRESSURE_REQUIRED,
         "recent_stress_window": RECENT_STRESS_WINDOW,
         "repair_building": REPAIR_BUILDING_SCORE,
+        "acute_release_shock_max": ACUTE_RELEASE_SHOCK_MAX,
+        "acute_release_sessions": ACUTE_RELEASE_SESSIONS,
     }
     for name, runtime_value in bindings.items():
         _same(errors, f"state.thresholds.{name}", runtime_value, t[name])

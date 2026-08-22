@@ -19,8 +19,8 @@ V1 仍有五项阻断 V2 的业务缺陷：
 |---|---|---|---|---|
 | `DATA-001` | P0 | DATA | 严格 30 日 `VXCM30` 在完整 F1–F7 仍可得时周期性失去左夹逼锚；162 个直接缺口令 324 个 5 日变化不可用，另有 5 个合法 warm-up null | CLOSED |
 | `TENOR-001` | P1 | TENOR | V1 没有直接发布 F4–F7 level/slope/breadth/change，`Persistence` 不能回答中期限当前处于扩散、已计价还是衰减 | CLOSED |
-| `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | IMPLEMENTED / TIMING_GATE_PENDING |
-| `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | SPEC_FROZEN |
+| `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | CLOSED |
+| `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | CLOSED |
 | `PROBABILITY-001` | P1 | PROBABILITY | 概率流水线完整，但现有 broad/repair 标签不是直接 F4–F7 扩散与 carry 恢复问题，两个模型也未提供可发布增量 | SPEC_FROZEN |
 
 本审计没有读取任何产品价格，没有生成收益、仓位、策略、HTML、V1.1 路径，也没有读取
@@ -249,8 +249,8 @@ affected existing files: src/matvix/state/scores.py; src/matvix/state/ontology.p
 semantic/version impact: state/schema/model 语义升为 2.0.0；稳定接口字段名可保留，但含义改变必须在 V2 规格逐项写明。
 station acceptance criterion: answer/phase 互斥、完整、确定重放并传播 UNKNOWN；相同直接 tenor 事实不会映射为相互冲突状态；Repair 与 carry OPEN 有独立字段和验收。
 implementation evidence: 2,803 个 OK row 的三个 structure 字段和五个当前 answer 均无 UNKNOWN；正式计数为 scope NONE/MID/BROAD/FRONT=1,314/667/525/297，mid QUIET/RISING/PRICED/RECEDING=1,012/599/593/599，carry CLOSED/RECOVERING/OPEN=1,338/800/665。`PRESSURE_BUILDING` 与 calendar phase 已为 0；Repair CONFIRMED 599 行全部不等于 carry SUPPORTIVE，另有 665 行 SUPPORTIVE 且 Repair 未确认，两个含义没有逻辑蕴含。V2 JSON 已要求并校验 `market_story.structure`；213 项测试、Ruff、Mypy、doctor、正式全历史重建与 13 个现有验收门通过。
-remaining dependency: 旧通用 phase hysteresis 仍造成 535 个非 acute 的 phase/raw_phase 差异；按冻结规格只能由 TIMING-001 删除，故本 defect 在 TIMING-001 通过前不标 CLOSED。
-status: IMPLEMENTED / TIMING_GATE_PENDING
+dependency closure: TIMING-001 已删除通用 phase hysteresis；正式历史 179 个 phase/raw_phase 差异全部是冻结的 acute 两日释放，非 acute 差异为 0，`candidate_phase/candidate_streak` 已从 state、JSON 与 Schema 删除。
+status: CLOSED
 ```
 
 ### TIMING-001
@@ -267,7 +267,8 @@ minimal repair: 在 STATE-001 的直接事实与独立 event ledger 上重写最
 affected existing files: src/matvix/state/ontology.py; src/matvix/state/transitions.py; configs/state_v1.yaml; station acceptance tests/module。
 semantic/version impact: state/model 语义升为 2.0.0；任何 hysteresis 变化必须归属本 defect，不建设通用状态治理框架。
 station acceptance criterion: 相对冻结 V1，原始事件簇漏报不增、中位首次预警不晚、误报簇不增；Repair 延迟下降且过早释放不增；churn 改善不能延长关闭。
-status: SPEC_FROZEN
+closure evidence: 以阶段 A 同一原始 event ledger 和同一匹配窗口重算，V2/V1 的（漏报簇，误报簇，中位延迟）分别为：acute (82,14,0)/(82,14,0)，front inversion (14,1,0)/(15,7,0)，mid diffusion (0,0,0)/(40,123,0)，broad persistence (0,1,0)/(30,9,0)，mid receding (0,1,0)/(104,23,1)，carry recovery (0,0,0)/(16,85,0)。Repair 过早释放为 0/161=0%，低于 V1 的 3/67=4.48%；carry 恢复后共同稳定接口继续关闭的中位/最大为 0/5 session，低于 V1 的 2/23。阶段 B 第 21.5 节的 broad ledger 文字已校正为阶段 A 可执行账本和 `broad_pressure_now` 共同定义的“5 日至少 3 日 broad”，不是实施后调阈值。V2 phase 转换为 947 次、V1 为 585 次，故不声称 churn 改善；直接事实带来的时效改善没有靠延迟识别或延长关闭取得。213 项测试、Ruff、Mypy、正式全历史重建、完整概率重建与 13 个现有验收门通过。
+status: CLOSED
 ```
 
 ### PROBABILITY-001
@@ -328,3 +329,7 @@ status: SPEC_FROZEN
 `state/transitions.py`、`probability/*`、`acceptance.py` 与既有测试，不新增通用包；阶段 D
 通过前不创建经济探针模块。每次提交继续报告累计行数与新增文件，且任何新增单元必须能映射到
 当前 defect 的冻结验收准则。
+
+`TIMING-001` 提交前复核：该 defect 为 34 additions / 74 deletions，累计为 2,035 additions /
+312 deletions；新增跟踪文件仍为 3。新增行只绑定 acute release 常量、配置契约和聚焦测试，
+同时删除通用 candidate hysteresis 与正式 candidate 输出，符合上述重映射裁决。

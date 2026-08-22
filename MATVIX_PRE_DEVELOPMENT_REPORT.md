@@ -1932,7 +1932,9 @@ acute_front_pressure = 三项中至少两项：
     d1_log_vix >= 开发窗固定 P90
 front_inversion = F1>F2
 mid_curve_diffusion = scope=BROAD AND mid_state=RISING
-broad_stress = scope=BROAD AND mid_state in {RISING,PRICED}
+broad_stress = broad_pressure_now=true
+               # 即最近 5 个 session（含当日）至少 3 日
+               # scope=BROAD AND mid_state in {RISING,PRICED}
 mid_pressure_receding = mid_state=RECEDING
 carry_recovered = carry_environment_state=OPEN
 ```
@@ -1944,7 +1946,7 @@ carry_recovered = carry_environment_state=OPEN
 acute_front_pressure -> hard_acute
 front_inversion -> carry_answer=INVERTED
 mid_curve_diffusion -> V2 scope/mid_state 的同名直接事实
-broad_stress -> V2 scope/mid_state 的同名直接事实
+broad_stress -> persistence_answer=PERSISTENT
 mid_pressure_receding -> repair_answer=CONFIRMED
 carry_recovered -> carry_environment_state=OPEN
 ```
