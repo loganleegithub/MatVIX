@@ -49,7 +49,7 @@ def test_checked_in_release_config_is_bound_to_runtime_semantics() -> None:
 
     assert report.versions == {
         "source_manifest.yaml": "1.0.0",
-        "features_v1.yaml": "1.0.0",
+        "features_v2.yaml": "2.0.0",
         "state_v1.yaml": "1.0.0",
         "probability_v1.yaml": "1.1.0",
     }
@@ -58,7 +58,7 @@ def test_checked_in_release_config_is_bound_to_runtime_semantics() -> None:
 
 def test_yaml_comment_and_format_changes_do_not_change_contract(tmp_path: Path) -> None:
     root = _copy_release_configs(tmp_path)
-    feature_path = root / "configs" / "features_v1.yaml"
+    feature_path = root / "configs" / "features_v2.yaml"
     feature_path.write_text(
         feature_path.read_text(encoding="utf-8") + "\n# release operator note\n",
         encoding="utf-8",
@@ -117,9 +117,9 @@ def test_project_root_runs_release_validation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     root = _copy_release_configs(tmp_path)
-    feature_path = root / "configs" / "features_v1.yaml"
+    feature_path = root / "configs" / "features_v2.yaml"
     feature_path.write_text(
-        feature_path.read_text(encoding="utf-8").replace('version: "1.0.0"', 'version: "9.0.0"', 1),
+        feature_path.read_text(encoding="utf-8").replace('version: "2.0.0"', 'version: "9.0.0"', 1),
         encoding="utf-8",
     )
     monkeypatch.setenv("MATVIX_PROJECT_DIR", str(root))

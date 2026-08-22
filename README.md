@@ -67,7 +67,7 @@ Then rebuild the normalized revision ledgers and state history:
   --output outputs/dashboard.html --project-dir .
 ```
 
-The accepted source snapshot ends with a complete F1-F6 curve on 2026-08-18.
+The required source snapshot ends with a complete F1-F7 curve on 2026-08-18.
 Four missing SKEW observations and invalid CFE `Settle=0` values are preserved
 as missing; the pipeline does not forward-fill them.
 

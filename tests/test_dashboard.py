@@ -98,7 +98,7 @@ def _snapshot() -> dict[str, Any]:
             "vix_close": 15.84,
             "vix3m_close": 19.27,
             "vix6m_close": 21.37,
-            "vx_contract_ids": ["F1", "F2", "F3", "F4", "F5", "F6"],
+            "vx_contract_ids": ["F1", "F2", "F3", "F4", "F5", "F6", "F7"],
             "vx_settles": [15.9, 18.2, 19.7, 20.4, 20.5, 21.6],
         },
         "diagnostics": {"hard_acute": False},

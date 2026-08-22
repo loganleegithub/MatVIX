@@ -31,10 +31,10 @@ _FROZEN = {
         "1.0.0",
         "390b01396d26f09d77b1393fd890d625a951df9c15eecca45e04497c0098d168",
     ),
-    "features_v1.yaml": (
+    "features_v2.yaml": (
         "version",
-        "1.0.0",
-        "2d2eaed70327573a1f6e17b4cf2e2e6276843b1483af0805f702c87658fc9e72",
+        "2.0.0",
+        "f209980fcc7be6c31b5400e790d478b57c43e7fe9b47b1a5af8cd76927a0bd91",
     ),
     "state_v1.yaml": (
         "version",
@@ -117,7 +117,12 @@ def _same(errors: list[str], label: str, runtime: Any, configured: Any) -> None:
 
 def _feature_contract(config: dict[str, Any], errors: list[str]) -> None:
     from matvix.constants import FEATURE_VERSION, MODEL_ID
-    from matvix.features.futures_curve import select_standard_monthly_curve
+    from matvix.features.futures_curve import (
+        VXCM30_MAX_FRONT_DAYS,
+        VXCM30_METHODOLOGY,
+        VXCM30_TARGET_DAYS,
+        select_standard_monthly_curve,
+    )
     from matvix.features.percentile import rolling_midrank_percentile
     from matvix.features.vrp import ewma94_variance
 
@@ -147,6 +152,25 @@ def _feature_contract(config: dict[str, Any], errors: list[str]) -> None:
         "features.futures.curve_contracts",
         _default(select_standard_monthly_curve, "count"),
         config["futures"]["curve_contracts"],
+    )
+    _same(
+        errors,
+        "features.futures.target_days",
+        VXCM30_TARGET_DAYS,
+        config["futures"]["target_days"],
+    )
+    bounded = config["futures"]["bounded_backward_extrapolation"]
+    _same(
+        errors,
+        "features.futures.bounded.maximum_front_days",
+        VXCM30_MAX_FRONT_DAYS,
+        bounded["maximum_front_days"],
+    )
+    _same(
+        errors,
+        "features.futures.bounded.methodology",
+        VXCM30_METHODOLOGY,
+        bounded["methodology"],
     )
     vrp = config["vrp"]
     _same(errors, "features.vrp.lambda", _default(ewma94_variance, "lambda_"), vrp["lambda"])
@@ -312,7 +336,7 @@ def validate_frozen_config(project_dir: str | Path) -> ConfigContractReport:
         if value.get(version_field) != version:
             errors.append(f"{name}.{version_field}: expected {version!r}")
     if not errors:
-        _feature_contract(loaded["features_v1.yaml"], errors)
+        _feature_contract(loaded["features_v2.yaml"], errors)
         _state_contract(loaded["state_v1.yaml"], errors)
         _probability_contract(loaded["probability_v1.yaml"], errors)
     if errors:

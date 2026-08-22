@@ -32,7 +32,7 @@ def test_standard_monthly_f1_f2_excludes_expired_and_weekly(session: pd.Timestam
     weekly["contract_id"] = "WEEKLY"
     weekly["is_standard_monthly"] = False
     selected = select_standard_monthly_curve(pd.concat([expired, weekly, curve]), session)
-    assert selected["contract_id"].tolist() == [f"VX_TEST_{i}" for i in range(1, 7)]
+    assert selected["contract_id"].tolist() == [f"VX_TEST_{i}" for i in range(1, 8)]
 
 
 def test_settlement_day_roll_excludes_contract_after_final_time(session: pd.Timestamp) -> None:
@@ -46,10 +46,10 @@ def test_settlement_day_roll_excludes_contract_after_final_time(session: pd.Time
 
 def test_contango_and_backwardation_signs(session: pd.Timestamp) -> None:
     contango = curve_features_for_session(
-        make_curve(session, settles=[18, 19, 20, 21, 22, 23]), session
+        make_curve(session, settles=[18, 19, 20, 21, 22, 23, 24]), session
     )
     backward = curve_features_for_session(
-        make_curve(session, settles=[20, 19, 18, 17, 16, 15]), session
+        make_curve(session, settles=[20, 19, 18, 17, 16, 15, 14]), session
     )
     assert contango["ts12"] > 0 and contango["front_slope30"] > 0
     assert backward["ts12"] < 0 and backward["front_slope30"] < 0
@@ -57,7 +57,11 @@ def test_contango_and_backwardation_signs(session: pd.Timestamp) -> None:
 
 def test_ts12_and_front_slope_golden(session: pd.Timestamp) -> None:
     output = curve_features_for_session(
-        make_curve(session, settles=[20, 22, 23, 24, 25, 26], days=[10, 40, 70, 100, 130, 160]),
+        make_curve(
+            session,
+            settles=[20, 22, 23, 24, 25, 26, 27],
+            days=[10, 40, 70, 100, 130, 160, 190],
+        ),
         session,
     )
     assert output["ts12"] == pytest.approx(0.10)
@@ -66,7 +70,11 @@ def test_ts12_and_front_slope_golden(session: pd.Timestamp) -> None:
 
 def test_true_30_day_bracket_can_be_f2_f3(session: pd.Timestamp) -> None:
     output = curve_features_for_session(
-        make_curve(session, settles=[20, 21, 24, 25, 26, 27], days=[-1, 15, 45, 75, 105, 135]),
+        make_curve(
+            session,
+            settles=[20, 21, 24, 25, 26, 27, 28, 29],
+            days=[-1, 15, 45, 75, 105, 135, 165, 195],
+        ),
         session,
     )
     # The first row is expired and removed; the 15/45 day pair are selected F1/F2 after filtering.
@@ -76,17 +84,91 @@ def test_true_30_day_bracket_can_be_f2_f3(session: pd.Timestamp) -> None:
 
 def test_no_extrapolation_without_30_day_bracket(session: pd.Timestamp) -> None:
     output = curve_features_for_session(
-        make_curve(session, days=[40, 70, 100, 130, 160, 190]), session
+        make_curve(session, days=[40, 70, 100, 130, 160, 190, 220]), session
     )
     assert math.isnan(float(output["vxcm30"]))
     assert output["vxcm30_bracket_ids"] == []
 
 
-def test_curve_inversion_share_requires_six(session: pd.Timestamp) -> None:
-    full = curve_features_for_session(
-        make_curve(session, settles=[20, 19, 21, 20, 22, 21]), session
+def test_v2_curve_selects_f1_f7_and_labels_direct_vxcm30(session: pd.Timestamp) -> None:
+    output = curve_features_for_session(
+        make_curve(
+            session,
+            settles=[18, 19, 20, 21, 22, 23, 24],
+            days=[10, 40, 70, 100, 130, 160, 190],
+        ),
+        session,
     )
-    short = curve_features_for_session(make_curve(session).iloc[:5], session)
+
+    assert output["vx_contract_ids"] == [f"VX_TEST_{i}" for i in range(1, 8)]
+    assert output["vxcm30"] == pytest.approx(18 + (19 - 18) * 20 / 30)
+    assert output["vxcm30_source_kind"] == "DIRECT_BRACKET_INTERPOLATION"
+    assert output["vxcm30_methodology"] == "VXCM30_LINEAR_30D_V2"
+
+
+def test_v2_vxcm30_uses_bounded_backward_extrapolation(session: pd.Timestamp) -> None:
+    output = curve_features_for_session(
+        make_curve(
+            session,
+            settles=[19, 20, 21, 22, 23, 24, 25],
+            days=[34, 64, 94, 124, 154, 184, 214],
+        ),
+        session,
+    )
+
+    assert output["vxcm30"] == pytest.approx(19 + (20 - 19) * (30 - 34) / (64 - 34))
+    assert output["vxcm30_bracket_ids"] == ["VX_TEST_1", "VX_TEST_2"]
+    assert output["vxcm30_source_kind"] == "BOUNDED_BACKWARD_EXTRAPOLATION"
+
+
+@pytest.mark.parametrize(
+    ("days", "vintage_kind"),
+    [
+        ([37, 67, 97, 127, 157, 187, 217], "ASSUMED_PIT"),
+        ([34, 64, 94, 124, 154, 184, 214], "PROVIDER_BACKTESTED"),
+    ],
+)
+def test_v2_vxcm30_refuses_out_of_bound_or_nonformal_reconstruction(
+    session: pd.Timestamp, days: list[int], vintage_kind: str
+) -> None:
+    output = curve_features_for_session(
+        make_curve(
+            session,
+            settles=[19, 20, 21, 22, 23, 24, 25],
+            days=days,
+            vintage_kind=vintage_kind,
+        ),
+        session,
+    )
+
+    assert math.isnan(float(output["vxcm30"]))
+    assert output["vxcm30_bracket_ids"] == []
+    assert output["vxcm30_source_kind"] == "UNAVAILABLE"
+    assert output["vxcm30_methodology"] is None
+
+
+def test_v2_curve_refuses_a_skipped_standard_month(session: pd.Timestamp) -> None:
+    output = curve_features_for_session(
+        make_curve(
+            session,
+            settles=[18, 19, 20, 21, 22, 23, 24],
+            days=[10, 70, 100, 130, 160, 190, 220],
+        ),
+        session,
+    )
+
+    assert output["vx_formal_vintage_eligible"] is False
+    assert math.isnan(float(output["vxcm30"]))
+    assert output["vxcm30_source_kind"] == "UNAVAILABLE"
+
+
+def test_legacy_curve_inversion_share_uses_first_six_but_requires_f1_f7(
+    session: pd.Timestamp,
+) -> None:
+    full = curve_features_for_session(
+        make_curve(session, settles=[20, 19, 21, 20, 22, 21, 23]), session
+    )
+    short = curve_features_for_session(make_curve(session).iloc[:6], session)
     assert full["curve_inversion_share"] == pytest.approx(3 / 5)
     assert math.isnan(float(short["curve_inversion_share"]))
 

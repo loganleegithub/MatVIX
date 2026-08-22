@@ -1,13 +1,16 @@
-version: "1.0.0"
-model_id: MATVIX_CBOE_CORE_V1
+version: "2.0.0"
+model_id: MATVIX_CBOE_CORE_V2
 percentile:
   reference_sessions: 756
   minimum_valid: 504
   exclude_current: true
 futures:
   settlement_event_time_chicago: "15:00:00"
-  curve_contracts: 6
+  curve_contracts: 7
   target_days: 30.0
+  bounded_backward_extrapolation:
+    maximum_front_days: 36.0
+    methodology: VXCM30_LINEAR_30D_V2
 iv_target_days:
   vix9d: 9.0
   vix: 30.0

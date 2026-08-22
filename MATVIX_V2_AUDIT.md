@@ -17,7 +17,7 @@ V1 仍有五项阻断 V2 的业务缺陷：
 
 | defect_id | severity | layer | 一句话结论 | status |
 |---|---|---|---|---|
-| `DATA-001` | P0 | DATA | 严格 30 日 `VXCM30` 在完整 F1–F7 仍可得时周期性失去左夹逼锚；162 个直接缺口令 324 个 5 日变化不可用，另有 5 个合法 warm-up null | SPEC_FROZEN |
+| `DATA-001` | P0 | DATA | 严格 30 日 `VXCM30` 在完整 F1–F7 仍可得时周期性失去左夹逼锚；162 个直接缺口令 324 个 5 日变化不可用，另有 5 个合法 warm-up null | CLOSED |
 | `TENOR-001` | P1 | TENOR | V1 没有直接发布 F4–F7 level/slope/breadth/change，`Persistence` 不能回答中期限当前处于扩散、已计价还是衰减 | SPEC_FROZEN |
 | `STATE-001` | P1 | STATE | `Persistence`、`PRESSURE_BUILDING` 和 `Repair` 混合不同业务阶段；边际修复不等于 carry 已恢复 | SPEC_FROZEN |
 | `TIMING-001` | P1 | TIMING | 相对独立原始事件簇，V1 对中期限扩散、衰减和 carry 恢复存在漏报、误报或延迟，现有滞回不能证明业务时效完整 | SPEC_FROZEN |
@@ -212,7 +212,8 @@ minimal repair: V2 仅在 30<D1<=36、F1/F2 连续正值且 PIT/method 合法时
 affected existing files: src/matvix/features/futures_curve.py; src/matvix/features/builder.py; configs/features_v1.yaml（V2 就地替换时改名/升版）; src/matvix/output.py; schemas/daily_output.schema.json; 公式与 PIT 测试。
 semantic/version impact: feature/schema/model 相关语义升为 2.0.0；不得改写 V1 冻结产物，不建立 V1/V2 双路径。
 station acceptance criterion: 162 个定义域缺口均被可审计方法覆盖或严格降级；开发/确认伪缺口分别满足冻结误差门；direct/reconstructed/unavailable 不混淆；324 个缺陷相关 d5 null 按公式消除且只保留 5 个合法 warm-up null；未来追加不改变过去。
-status: SPEC_FROZEN
+closure evidence: 正式全历史 3,334 行均为七锚；3,172 行 DIRECT_BRACKET_INTERPOLATION、162 行 BOUNDED_BACKWARD_EXTRAPOLATION、0 行 UNAVAILABLE；VXCM30 直接 null 从 162 降为 0，d5_log_vxcm30/d5_basis30_eod 均只余开头 5 个合法 warm-up null；所有 bounded 行 formal-vintage eligible，最大 D1=35.7083；开发/确认伪缺口固定门均通过；210 项测试、Ruff、Mypy、doctor 和 13 个现有正式验收门通过。
+status: CLOSED
 ```
 
 ### TENOR-001

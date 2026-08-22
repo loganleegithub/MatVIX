@@ -191,11 +191,11 @@ def _row_has_complete_curve(row: pd.Series) -> bool:
     settlements = _as_sequence(row.get("vx_settles"))
     days = _as_sequence(row.get("vx_days_to_final"))
     return (
-        len(identifiers) == 6
-        and len(set(str(value) for value in identifiers)) == 6
-        and len(settlements) == 6
+        len(identifiers) == 7
+        and len(set(str(value) for value in identifiers)) == 7
+        and len(settlements) == 7
         and all(_is_finite_number(value) and float(value) > 0 for value in settlements)
-        and len(days) == 6
+        and len(days) == 7
         and all(_is_finite_number(value) and float(value) > 0 for value in days)
         and all(float(left) < float(right) for left, right in zip(days[:-1], days[1:], strict=True))
     )
@@ -321,7 +321,7 @@ def _audit_real_vx(
     ]
     selected_ids = [str(value) for value in _as_sequence(latest.get("vx_contract_ids"))]
     selected_settles = _as_sequence(latest.get("vx_settles"))
-    selected_match = len(selected_ids) == len(selected_settles) == 6
+    selected_match = len(selected_ids) == len(selected_settles) == 7
     for identifier, value in zip(selected_ids, selected_settles, strict=True):
         matches = pd.to_numeric(
             latest_raw.loc[latest_raw["contract_id"].astype(str).eq(identifier), "settle"],
@@ -333,7 +333,7 @@ def _audit_real_vx(
         )
     passed = (
         formal["session_date"].nunique() >= 756
-        and latest_raw["contract_id"].nunique() >= 6
+        and latest_raw["contract_id"].nunique() >= 7
         and selected_match
     )
     return passed, {

@@ -7,6 +7,10 @@ import numpy as np
 import pandas as pd
 
 CHICAGO = ZoneInfo("America/Chicago")
+CURVE_CONTRACTS = 7
+VXCM30_TARGET_DAYS = 30.0
+VXCM30_MAX_FRONT_DAYS = 36.0
+VXCM30_METHODOLOGY = "VXCM30_LINEAR_30D_V2"
 
 
 def _to_chicago_timestamp(value: object) -> pd.Timestamp:
@@ -20,7 +24,7 @@ def select_standard_monthly_curve(
     contracts: pd.DataFrame,
     session_date: pd.Timestamp | str,
     *,
-    count: int = 6,
+    count: int = CURVE_CONTRACTS,
 ) -> pd.DataFrame:
     session = pd.Timestamp(session_date).normalize()
     cutoff = pd.Timestamp(datetime.combine(session.date(), time(15, 0), tzinfo=CHICAGO))
@@ -41,17 +45,57 @@ def select_standard_monthly_curve(
     return frame.head(count).reset_index(drop=True)
 
 
+def _has_consecutive_contract_months(curve: pd.DataFrame) -> bool:
+    if curve.empty:
+        return False
+    if {"contract_year", "contract_month"}.issubset(curve.columns):
+        years = pd.to_numeric(curve["contract_year"], errors="coerce")
+        months = pd.to_numeric(curve["contract_month"], errors="coerce")
+        if years.isna().any() or months.isna().any():
+            return False
+        serial = (years.astype(int) * 12 + months.astype(int)).to_numpy()
+    else:
+        timestamps = (
+            curve["_final_ts"]
+            if "_final_ts" in curve
+            else curve["final_settlement_timestamp"].map(_to_chicago_timestamp)
+        )
+        serial = np.array([timestamp.year * 12 + timestamp.month for timestamp in timestamps])
+    return bool(len(serial) == CURVE_CONTRACTS and np.all(np.diff(serial) == 1))
+
+
+def standard_monthly_curve_is_complete(curve: pd.DataFrame) -> bool:
+    if len(curve) != CURVE_CONTRACTS or "settle" not in curve or "contract_id" not in curve:
+        return False
+    settlements = pd.to_numeric(curve["settle"], errors="coerce")
+    identifiers = curve["contract_id"].astype(str)
+    timestamps = (
+        curve["_final_ts"]
+        if "_final_ts" in curve
+        else curve["final_settlement_timestamp"].map(_to_chicago_timestamp)
+    )
+    return bool(
+        identifiers.nunique() == CURVE_CONTRACTS
+        and settlements.notna().all()
+        and settlements.gt(0).all()
+        and all(left < right for left, right in zip(timestamps[:-1], timestamps[1:], strict=True))
+        and _has_consecutive_contract_months(curve)
+    )
+
+
 def curve_features_for_session(
     contracts: pd.DataFrame, session_date: pd.Timestamp | str
 ) -> dict[str, object]:
     session = pd.Timestamp(session_date).normalize()
-    curve = select_standard_monthly_curve(contracts, session, count=6)
+    curve = select_standard_monthly_curve(contracts, session, count=CURVE_CONTRACTS)
     output: dict[str, object] = {
         "session_date": session,
         "ts12": np.nan,
         "ts12_log_ratio": np.nan,
         "front_slope30": np.nan,
         "vxcm30": np.nan,
+        "vxcm30_source_kind": "UNAVAILABLE",
+        "vxcm30_methodology": None,
         "curve_inversion_share": np.nan,
         "vx_contract_ids": [],
         "vx_settles": [],
@@ -75,9 +119,15 @@ def curve_features_for_session(
     ids = curve["contract_id"].astype(str).tolist()
     vintages = curve["vintage_kind"].astype(str).tolist() if "vintage_kind" in curve else []
     revisions = curve["revision_id"].astype(str).tolist() if "revision_id" in curve else []
+    complete_curve = standard_monthly_curve_is_complete(curve) and bool(
+        len(days) == CURVE_CONTRACTS
+        and np.all(np.isfinite(days))
+        and np.all(days > 0)
+        and np.all(np.diff(days) > 0)
+    )
     formal = (
-        len(curve) == 6
-        and len(vintages) == 6
+        complete_curve
+        and len(vintages) == CURVE_CONTRACTS
         and all(value in {"OBSERVED_PIT", "ASSUMED_PIT"} for value in vintages)
     )
     output.update(
@@ -96,19 +146,35 @@ def curve_features_for_session(
         output["ts12"] = ratio - 1.0
         output["ts12_log_ratio"] = float(np.log(ratio))
         output["front_slope30"] = float(np.log(ratio) * 30.0 / (days[1] - days[0]))
-    for index in range(len(curve) - 1):
-        left_days, right_days = days[index], days[index + 1]
-        if left_days <= 30.0 < right_days and right_days > left_days:
-            left_weight = (right_days - 30.0) / (right_days - left_days)
-            right_weight = (30.0 - left_days) / (right_days - left_days)
+    if formal:
+        for index in range(len(curve) - 1):
+            left_days, right_days = days[index], days[index + 1]
+            if left_days <= VXCM30_TARGET_DAYS < right_days:
+                left_weight = (right_days - VXCM30_TARGET_DAYS) / (right_days - left_days)
+                right_weight = (VXCM30_TARGET_DAYS - left_days) / (right_days - left_days)
+                output["vxcm30"] = float(
+                    left_weight * settlements[index] + right_weight * settlements[index + 1]
+                )
+                output["vxcm30_bracket_ids"] = [ids[index], ids[index + 1]]
+                output["vxcm30_source_kind"] = "DIRECT_BRACKET_INTERPOLATION"
+                output["vxcm30_methodology"] = VXCM30_METHODOLOGY
+                break
+        if (
+            output["vxcm30_source_kind"] == "UNAVAILABLE"
+            and VXCM30_TARGET_DAYS < days[0] <= VXCM30_MAX_FRONT_DAYS
+        ):
             output["vxcm30"] = float(
-                left_weight * settlements[index] + right_weight * settlements[index + 1]
+                settlements[0]
+                + (settlements[1] - settlements[0])
+                * (VXCM30_TARGET_DAYS - days[0])
+                / (days[1] - days[0])
             )
-            output["vxcm30_bracket_ids"] = [ids[index], ids[index + 1]]
-            break
-    if len(curve) == 6:
+            output["vxcm30_bracket_ids"] = [ids[0], ids[1]]
+            output["vxcm30_source_kind"] = "BOUNDED_BACKWARD_EXTRAPOLATION"
+            output["vxcm30_methodology"] = VXCM30_METHODOLOGY
+    if complete_curve:
         output["curve_inversion_share"] = float(
-            np.count_nonzero(settlements[:-1] > settlements[1:]) / 5.0
+            np.count_nonzero(settlements[:5] > settlements[1:6]) / 5.0
         )
     return output
 

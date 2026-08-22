@@ -48,9 +48,11 @@ def _state_and_snapshot() -> tuple[pd.DataFrame, dict[str, object]]:
     row["session_date"] = pd.Timestamp("2025-01-02")
     row["feature_methodology_signature"] = "CBOE_V1|CFE_V1"
     row["pit_evidence"] = "ASSUMED"
-    row["vx_contract_ids"] = np.asarray([f"VX{i}" for i in range(1, 7)])
-    row["vx_settles"] = np.asarray([18.0, 19.0, 20.0, 21.0, 22.0, 23.0])
-    row["vx_days_to_final"] = np.asarray([10.0, 40.0, 70.0, 100.0, 130.0, 160.0])
+    row["vx_contract_ids"] = np.asarray([f"VX{i}" for i in range(1, 8)])
+    row["vx_settles"] = np.asarray([18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0])
+    row["vx_days_to_final"] = np.asarray(
+        [10.0, 40.0, 70.0, 100.0, 130.0, 160.0, 190.0]
+    )
     events = {event: _event() for event in EVENT_ORDER}
     snapshot = build_daily_output(
         row,

@@ -20,8 +20,8 @@ def session() -> pd.Timestamp:
 def make_curve(
     session_date: str | pd.Timestamp = "2025-01-02",
     *,
-    settles: Iterable[float] = (18, 19, 20, 21, 22, 23),
-    days: Iterable[float] = (10, 40, 70, 100, 130, 160),
+    settles: Iterable[float] = (18, 19, 20, 21, 22, 23, 24),
+    days: Iterable[float] = (10, 40, 70, 100, 130, 160, 190),
     vintage_kind: str = "ASSUMED_PIT",
 ) -> pd.DataFrame:
     session = pd.Timestamp(session_date).normalize()
@@ -116,7 +116,7 @@ def make_vx_history(sessions: Iterable[pd.Timestamp]) -> pd.DataFrame:
     frames = []
     for i, day in enumerate(sessions):
         level = 18.5 + 1.8 * np.sin(i / 19.0) + 0.003 * i
-        settles = [level + 0.5 * j for j in range(6)]
+        settles = [level + 0.5 * j for j in range(7)]
         frames.append(make_curve(day, settles=settles))
     return pd.concat(frames, ignore_index=True)
 

@@ -49,6 +49,8 @@ DIAGNOSTIC_FIELDS = [
     "ts12",
     "front_slope30",
     "vxcm30",
+    "vxcm30_source_kind",
+    "vxcm30_methodology",
     "basis30_eod",
     "ratio_9_30",
     "near_stress_log_ratio",

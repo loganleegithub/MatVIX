@@ -49,7 +49,10 @@ from matvix.data.point_in_time import (
     select_historical_point_in_time,
 )
 from matvix.data.spx import import_spx_close
-from matvix.features.futures_curve import select_standard_monthly_curve
+from matvix.features.futures_curve import (
+    select_standard_monthly_curve,
+    standard_monthly_curve_is_complete,
+)
 from matvix.pipeline import (
     ProjectPaths,
     build_snapshot_payload,
@@ -359,8 +362,8 @@ def _latest_complete_vx_session(
         .sort_values(ascending=False)
     )
     for session in sessions:
-        curve = select_standard_monthly_curve(contracts, session, count=6)
-        if len(curve) == 6 and pd.to_numeric(curve["settle"], errors="coerce").gt(0).all():
+        curve = select_standard_monthly_curve(contracts, session, count=7)
+        if standard_monthly_curve_is_complete(curve):
             return pd.Timestamp(session).normalize()
     return None
 
@@ -391,8 +394,8 @@ def latest_common_complete_session(
     for candidate in candidates:
         if not is_session(candidate):
             continue
-        curve = select_standard_monthly_curve(vx, candidate, count=6)
-        if len(curve) == 6 and pd.to_numeric(curve["settle"], errors="coerce").gt(0).all():
+        curve = select_standard_monthly_curve(vx, candidate, count=7)
+        if standard_monthly_curve_is_complete(curve):
             return pd.Timestamp(candidate).normalize()
     return None
 
@@ -442,9 +445,9 @@ def assess_source_freshness(
         )
 
     vx_spec = manifest.vx_series
-    curve = select_standard_monthly_curve(vx, target, count=6) if not vx.empty else pd.DataFrame()
+    curve = select_standard_monthly_curve(vx, target, count=7) if not vx.empty else pd.DataFrame()
     latest_vx = _latest_complete_vx_session(vx, not_after=target)
-    if len(curve) == 6 and pd.to_numeric(curve["settle"], errors="coerce").gt(0).all():
+    if standard_monthly_curve_is_complete(curve):
         vx_status = FreshnessStatus.FRESH
     elif vx.empty:
         vx_status = FreshnessStatus.MISSING

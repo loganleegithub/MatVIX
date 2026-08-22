@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-SCHEMA_VERSION = "1.0.0"
-MODEL_ID = "MATVIX_CBOE_CORE_V1"
-FEATURE_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
+MODEL_ID = "MATVIX_CBOE_CORE_V2"
+FEATURE_VERSION = "2.0.0"
 STATE_VERSION = "1.0.0"
 PROBABILITY_VERSION = "1.1.0"
 

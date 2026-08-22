@@ -72,7 +72,7 @@ def test_snapshot_accepts_arrow_array_curve_without_false_incomplete_issue() -> 
         formal_runtime_required=True,
     )[0]
 
-    assert not any(issue.startswith("INCOMPLETE_VX_F1_F6") for issue in payload["issues"])
+    assert not any(issue.startswith("INCOMPLETE_VX_F1_F7") for issue in payload["issues"])
 
 
 def test_replay_is_deterministic_for_same_history() -> None:

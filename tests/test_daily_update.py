@@ -277,13 +277,13 @@ VX,VX/G7,2027-02-17,21.9532
 
     merged = merge_revision_history(daily, archive, entity_columns=["contract_id"])
     selected = merged.loc[pd.to_datetime(merged["session_date"]).eq(pd.Timestamp("2026-08-18"))]
-    curve = select_standard_monthly_curve(merged, "2026-08-18", count=6)
+    curve = select_standard_monthly_curve(merged, "2026-08-18", count=7)
 
     assert len(merged) == len(daily)
     assert not selected.duplicated(["session_date", "final_settlement_date"]).any()
     assert curve["contract_id"].is_unique
     assert curve["final_settlement_date"].is_unique
-    assert len(curve) == 6
+    assert len(curve) == 7
 
 
 def test_spx_import_filters_pre_project_history_before_pit_conversion() -> None:

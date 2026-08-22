@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://matvix.local/schemas/daily_output.schema.json",
-  "title": "MatVIX v1 Daily Output",
+  "title": "MatVIX v2 Daily Output",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,13 +22,13 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0.0"
+      "const": "2.0.0"
     },
     "model_id": {
-      "const": "MATVIX_CBOE_CORE_V1"
+      "const": "MATVIX_CBOE_CORE_V2"
     },
     "feature_version": {
-      "const": "1.0.0"
+      "const": "2.0.0"
     },
     "state_version": {
       "const": "1.0.0"

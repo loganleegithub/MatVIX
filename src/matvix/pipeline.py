@@ -170,7 +170,7 @@ def _manifest_for_session(
         entity_columns=["contract_id"],
         formal_only=True,
     )
-    curve = select_standard_monthly_curve(admitted_vx, session, count=6)
+    curve = select_standard_monthly_curve(admitted_vx, session, count=7)
     fields = ["series_id", "session_date", "revision_id"]
     pieces: list[pd.DataFrame] = []
     if not spot.empty:
@@ -274,10 +274,10 @@ def build_snapshot_payload(
         issues.append("MISSING_CORE_INPUTS:" + ",".join(missing_core))
     curve_ids = state_row.get("vx_contract_ids")
     # Arrow restores list columns as NumPy arrays.  The persisted and
-    # in-memory representations are the same canonical F1-F6 curve.
+    # in-memory representations are the same canonical F1-F7 curve.
     curve_count = len(curve_ids) if isinstance(curve_ids, (list, tuple, np.ndarray)) else 0
-    if curve_count != 6:
-        issues.append(f"INCOMPLETE_VX_F1_F6:{curve_count}/6")
+    if curve_count != 7:
+        issues.append(f"INCOMPLETE_VX_F1_F7:{curve_count}/7")
 
     negative_forward_variance = [
         field
