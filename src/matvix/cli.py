@@ -55,6 +55,7 @@ from matvix.scheduler import (
     write_launchd_plist,
 )
 from matvix.storage import read_json, read_parquet, write_parquet
+from matvix.v2_audit import run_v2_business_audit
 
 app = typer.Typer(
     name="matvix",
@@ -112,6 +113,14 @@ def doctor(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
         typer.echo(f"{'FOUND' if path.exists() else 'MISSING':7} {name}: {path}")
     if any(status == "FAIL" for *_, status in rows):
         raise typer.Exit(code=2)
+
+
+@app.command("audit-v2")
+def audit_v2(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
+    """Run the frozen V1, weather-only Phase-A business audit."""
+    outputs = run_v2_business_audit(project_dir)
+    typer.echo(f"Wrote {outputs['daily']}")
+    typer.echo(f"Wrote {outputs['summary']}")
 
 
 @app.command("download-data")
