@@ -62,6 +62,7 @@ Then rebuild the normalized revision ledgers and state history:
   --date 2026-08-18 --full-rebuild --project-dir .
 .venv/bin/python -m matvix accept-real \
   --date 2026-08-18 --project-dir .
+.venv/bin/python -m matvix accept-v2-station --project-dir .
 .venv/bin/python -m matvix export-dashboard \
   --snapshot outputs/daily/2026-08-18.json \
   --output outputs/dashboard.html --project-dir .
@@ -76,6 +77,12 @@ state history, event targets, truly out-of-fold predictions, sequential Platt
 calibration and the daily publication.  A model that fails Brier/ECE is an
 honest accepted result only when the published event falls back to
 `BASE_RATE_ONLY`.
+
+`accept-v2-station` runs the weather-only V2 DATA, TENOR, STATE/TIMING,
+PROBABILITY INTEGRITY and PROBABILITY MODEL dimensions.  It writes the daily
+ledger, machine summary and Markdown report under
+`outputs/v2_station_acceptance/` without reading product prices or calculating
+an aggregate score.
 
 The probability cache is accepted only when its version, runtime, spec and
 state-history digest all match.

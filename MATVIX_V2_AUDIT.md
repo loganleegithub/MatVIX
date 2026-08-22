@@ -5,7 +5,7 @@
 > 基线提交：`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`
 > 历史范围：`2013-05-20` 至 `2026-08-20`，3,334 个正式 session
 > 审计日期：2026-08-22
-> 状态：PHASE_A_COMPLETE / PHASE_B_SPEC_FROZEN / PHASE_C_DEFECTS_CLOSED
+> 状态：PHASE_A_COMPLETE / PHASE_B_SPEC_FROZEN / PHASE_C_DEFECTS_CLOSED / PHASE_D_KEY_GATES_PASS
 
 ## 1. 结论先行
 
@@ -340,3 +340,35 @@ TIMING-001、PROBABILITY-001 顺序逐项关闭；下一步只能进入阶段 D 
 additions / 453 deletions；新增跟踪文件仍为 3，`probability_v2.yaml` 是删除 V1 路径后的就地
 版本替换。新增行只绑定五事件标签、predictors、Schema/publication 算术、校准完整性与聚焦测试；
 没有新增模块、版本分支或可调策略参数，继续符合 `PROCEED_WITH_EXISTING_SCOPE` 裁决。
+
+阶段 D 提交前复核：该阶段继续只扩展既有 `acceptance.py`、CLI 与测试，没有新增模块或跟踪文件；
+新增代码逐项绑定 DATA 公式/PIT/追加不变性、TENOR 分窗/当前方向 LOCO、STATE 确定重放、TIMING
+同账本比较、PROBABILITY 完整性/模型分层以及合同指定的三个证据文件。阶段 D 为 880 Python
+additions / 2 deletions，累计为 3,094 additions / 455 deletions，新增跟踪文件仍为 3；越线范围已按五个阶段 D 维度重新映射，没有新增
+renderer、governance、plugin、generic validation、策略或版本双路径。
+
+## 8. 阶段 D：完整气象站自身验收
+
+执行入口：
+
+```bash
+.venv/bin/python -m matvix accept-v2-station --project-dir .
+```
+
+合同指定的 `daily_ledger.parquet`、`summary.json`、`report.md` 已写入
+`outputs/v2_station_acceptance/`。3,334 行逐日账本只含气象站数据、状态、原始天气事件、V2 信号、
+target/OOF 计数与重放布尔量；截至此门仍未读取 SVXY、SGOV、VXZ 价格或任何产品收益。
+
+五维独立结论：
+
+| 维度 | 结论 | 关键证据 |
+|---|---|---|
+| DATA | `PASS` | 2,803 个 OK row 的必需字段、vintage 与独立 F1–F7 手算零违规；3,172 direct/162 bounded/0 unavailable；d5 仅 5 个合法 warm-up null；开发/确认伪缺口门通过；2024-12-31 截断后的 2,925 行 feature/state 与 6,394 条共同 OOF 追加不变 |
+| TENOR | `PASS` | 开发/确认的 DIFFUSING 106/100、PRICED 206/116、RECEDING 369/232 均满足冻结 d5/d10 level/slope-change 方向；98/96/160 个当前事实簇逐指标 leave-one-cluster-out 均稳定 |
+| STATE/TIMING | `PASS` | 全历史 state/answer/phase 确定重放零差异；179 个 phase/raw 差异全为 acute release；六类原始事件的漏报、误报与中位延迟均不劣于 V1；Repair 过早释放 0/161，carry 恢复后稳定接口继续关闭中位/最大 0/5 session；V2/V1 phase 转换 947/585，未声称 churn 改善 |
+| PROBABILITY INTEGRITY | `PASS` | 16,670 targets、7,704 OOF 的五事件集合、label/eligibility/vintage/censoring/purge/outcome availability/顺序 Platt/publication 算术全部重放通过 |
+| PROBABILITY MODEL | `FAIL` | acute/front/mid-acceleration 通过固定门；broad 仅 191 个可验证 calibrated OOF，记 `INSUFFICIENT_EVIDENCE`；carry Brier Skill=-6.67%、ECE=21.73%，记 `FAIL`；后两者最近 eligible session 均诚实 `BASE_RATE_ONLY` |
+
+阶段 D 不计算总分。按第 21.8 节，前四个关键维度均 `PASS`，故一次冻结经济探针入口为 `PASS`；
+`PROBABILITY MODEL` 不是入口门，且其 `BASE_RATE_ONLY` 不得计作预测增量。这个入口只授权阶段 E
+按冻结合同首次读取产品价格，不是 V2 ready、策略有效或经济增量结论。

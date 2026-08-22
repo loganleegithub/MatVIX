@@ -14,8 +14,10 @@ import typer
 
 from matvix.acceptance import (
     build_real_acceptance_report,
+    build_v2_station_acceptance,
     failed_gate_names,
     write_real_acceptance_report,
+    write_v2_station_acceptance,
 )
 from matvix.calendar import decision_as_of
 from matvix.config import project_root
@@ -59,7 +61,7 @@ from matvix.v2_audit import run_v2_business_audit
 
 app = typer.Typer(
     name="matvix",
-    help="MatVIX v1: PIT VIX market narrative and calibrated transition probabilities.",
+    help="MatVIX v2: PIT VIX market narrative and calibrated transition probabilities.",
     no_args_is_help=True,
 )
 
@@ -121,6 +123,58 @@ def audit_v2(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
     outputs = run_v2_business_audit(project_dir)
     typer.echo(f"Wrote {outputs['daily']}")
     typer.echo(f"Wrote {outputs['summary']}")
+
+
+@app.command("accept-v2-station")
+def accept_v2_station(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
+    """Run the weather-only Phase-D acceptance and write its three evidence artifacts."""
+
+    paths = _paths(project_dir)
+    observations, vx_contracts = load_persisted_inputs(paths)
+    features = read_parquet(paths.features)
+    states = load_persisted_states(paths)
+    targets, oof, _, _ = resolve_persisted_probability_artifacts(
+        paths, states, formal_runtime_required=True
+    )
+    complete = states.loc[states["data_status"].eq("OK")]
+    if complete.empty:
+        raise typer.BadParameter("No data_status=OK state is available for station acceptance")
+    selected = pd.Timestamp(complete["session_date"].max()).normalize()
+    snapshot, _, _, _ = build_snapshot_payload(
+        states,
+        observations,
+        vx_contracts,
+        session_date=selected,
+        formal_runtime_required=True,
+        target_ledger=targets,
+        oof_ledger=oof,
+    )
+    real_acceptance = build_real_acceptance_report(
+        observations=observations,
+        vx_contracts=vx_contracts,
+        states=states,
+        targets=targets,
+        oof=oof,
+        snapshot=snapshot,
+    )
+    phase_a_dir = paths.root / "outputs" / "v2_audit"
+    daily, summary = build_v2_station_acceptance(
+        observations=observations,
+        vx_contracts=vx_contracts,
+        features=features,
+        states=states,
+        targets=targets,
+        oof=oof,
+        real_acceptance=real_acceptance,
+        phase_a_daily=read_parquet(phase_a_dir / "business_audit_daily.parquet"),
+        phase_a_summary=read_json(phase_a_dir / "business_audit_summary.json"),
+    )
+    outputs = write_v2_station_acceptance(daily, summary, paths.root)
+    for name, result in summary["dimensions"].items():
+        typer.echo(f"{name}: {result['status']}")
+    typer.echo(f"ECONOMIC_PROBE_ENTRY: {summary['economic_probe_entry']['status']}")
+    for path in outputs.values():
+        typer.echo(f"Wrote {path}")
 
 
 @app.command("download-data")

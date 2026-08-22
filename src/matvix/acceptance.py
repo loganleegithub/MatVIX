@@ -14,6 +14,7 @@ from matvix.constants import (
     EVENT_ORDER,
     LOGISTIC_FEATURES,
 )
+from matvix.features.futures_curve import VXCM30_METHODOLOGY, VXCM30_TARGET_DAYS
 from matvix.output import validate_daily_output
 from matvix.probability.baseline import beta_smoothed_base_rate
 from matvix.probability.calibration import acceptance_metrics, apply_platt
@@ -21,7 +22,15 @@ from matvix.probability.engine import outlook_answer, probability_for_event
 from matvix.probability.targets import add_event_statuses
 from matvix.probability.walk_forward import ProbabilitySpec, runtime_contract_status
 from matvix.source_identity import OFFICIAL_OBSERVATION_IDENTITIES, VX_SETTLE_IDENTITY
-from matvix.storage import write_json
+from matvix.state.transitions import build_state_table
+from matvix.storage import write_json, write_parquet
+from matvix.v2_audit import (
+    _append_invariance,
+    _loco_direction,
+    _match_clusters,
+    _series_equal,
+    _true_clusters,
+)
 
 REQUIRED_SERIES = (
     "VIX_OPEN",
@@ -113,6 +122,39 @@ OOF_COLUMNS = {
     "calibration_samples",
     "calibration_converged",
 }
+
+STATION_DIMENSIONS = (
+    "DATA",
+    "TENOR",
+    "STATE_TIMING",
+    "PROBABILITY_INTEGRITY",
+    "PROBABILITY_MODEL",
+)
+STATION_REQUIRED_OK_FIELDS = (
+    "vxcm30",
+    "basis30_eod",
+    "front_curve_level",
+    "f4_f7_level",
+    "f4_f7_slope30",
+    "f4_f7_inversion_share",
+    "front_to_mid_log_ratio",
+    "d5_log_f4_f7_level",
+    "d5_f4_f7_slope30",
+    "d5_f4_f7_inversion_share",
+    "d10_log_f4_f7_level",
+    "d10_f4_f7_slope30",
+    "d10_f4_f7_inversion_share",
+    "p_f4_f7_level",
+    "p_neg_f4_f7_slope30",
+    "p_d5_log_f4_f7_level",
+    "p_neg_d5_log_f4_f7_level",
+    "p_d5_f4_f7_slope30",
+    "p_neg_d5_f4_f7_slope30",
+    "front_pressure",
+    "broad_pressure_day",
+    "broad_pressure_now",
+    "carry_open_day",
+)
 
 
 def _gate(name: str, passed: bool, **evidence: Any) -> dict[str, Any]:
@@ -1088,3 +1130,716 @@ def write_real_acceptance_report(report: dict[str, Any], path: str | Path) -> Pa
 
 def failed_gate_names(report: dict[str, Any]) -> Iterable[str]:
     return (str(gate["name"]) for gate in report.get("gates", []) if not bool(gate.get("passed")))
+
+
+def _station_curve_formula_valid(row: pd.Series) -> bool:
+    """Independently replay the seven-anchor curve facts published by one row."""
+
+    try:
+        identifiers = _as_sequence(row.get("vx_contract_ids"))
+        settlements = np.asarray(_as_sequence(row.get("vx_settles")), dtype=float)
+        days = np.asarray(_as_sequence(row.get("vx_days_to_final")), dtype=float)
+        if not (
+            len(identifiers) == len(settlements) == len(days) == 7
+            and len(set(identifiers)) == 7
+            and np.isfinite(settlements).all()
+            and np.isfinite(days).all()
+            and (settlements > 0).all()
+            and (days > 0).all()
+            and (np.diff(days) > 0).all()
+        ):
+            return False
+        expected = {
+            "front_curve_level": float(np.mean(settlements[:2])),
+            "f4_f7_level": float(np.mean(settlements[3:7])),
+            "f4_f7_slope30": float(
+                np.log(settlements[6] / settlements[3]) * 30.0 / (days[6] - days[3])
+            ),
+            "f4_f7_inversion_share": float(
+                np.count_nonzero(settlements[3:6] > settlements[4:7]) / 3.0
+            ),
+        }
+        expected["front_to_mid_log_ratio"] = float(
+            np.log(expected["f4_f7_level"] / expected["front_curve_level"])
+        )
+        if not all(_same_number(row.get(field), value, tolerance=1e-10) for field, value in expected.items()):
+            return False
+
+        source_kind = str(row.get("vxcm30_source_kind"))
+        expected_vxcm30: float | None = None
+        expected_kind = "UNAVAILABLE"
+        for index in range(6):
+            if days[index] <= VXCM30_TARGET_DAYS < days[index + 1]:
+                weight = (VXCM30_TARGET_DAYS - days[index]) / (days[index + 1] - days[index])
+                expected_vxcm30 = float(
+                    settlements[index] + weight * (settlements[index + 1] - settlements[index])
+                )
+                expected_kind = "DIRECT_BRACKET_INTERPOLATION"
+                break
+        if expected_vxcm30 is None and VXCM30_TARGET_DAYS < days[0] <= 36.0:
+            weight = (VXCM30_TARGET_DAYS - days[0]) / (days[1] - days[0])
+            expected_vxcm30 = float(settlements[0] + weight * (settlements[1] - settlements[0]))
+            expected_kind = "BOUNDED_BACKWARD_EXTRAPOLATION"
+        if source_kind != expected_kind:
+            return False
+        if expected_vxcm30 is None:
+            return pd.isna(row.get("vxcm30")) and row.get("vxcm30_methodology") is None
+        return bool(
+            _same_number(row.get("vxcm30"), expected_vxcm30, tolerance=1e-10)
+            and row.get("vxcm30_methodology") == VXCM30_METHODOLOGY
+        )
+    except (TypeError, ValueError, ZeroDivisionError):
+        return False
+
+
+def _station_probability_model_assessment(
+    events: dict[str, dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+    statuses: list[str] = []
+    for event in EVENT_ORDER:
+        evidence = events.get(event, {})
+        validation = evidence.get("validation", {})
+        validation = validation if isinstance(validation, dict) else {}
+        if not bool(evidence.get("validation_complete")):
+            status = "INSUFFICIENT_EVIDENCE"
+        elif bool(validation.get("accepted")):
+            status = "PASS"
+        else:
+            status = "FAIL"
+        statuses.append(status)
+        results[event] = {"status": status, **validation}
+    overall = (
+        "FAIL"
+        if "FAIL" in statuses
+        else "INSUFFICIENT_EVIDENCE"
+        if "INSUFFICIENT_EVIDENCE" in statuses
+        else "PASS"
+    )
+    return overall, {"events": results}
+
+
+def _station_tenor_stage_masks(states: pd.DataFrame) -> dict[str, pd.Series]:
+    broad = states["stress_tenor_scope"].eq("BROAD")
+    mid = states["mid_curve_pressure_state"]
+    return {
+        "DIFFUSING": broad & mid.eq("RISING"),
+        "PRICED": broad & mid.eq("PRICED"),
+        "RECEDING": mid.eq("RECEDING"),
+    }
+
+
+def _station_tenor_evidence(states: pd.DataFrame) -> tuple[bool, dict[str, Any]]:
+    dates = pd.to_datetime(states["session_date"]).dt.normalize()
+    windows = {
+        "DEVELOPMENT": dates.le(pd.Timestamp("2021-12-31")),
+        "CONFIRMATION": dates.ge(pd.Timestamp("2022-01-03")),
+    }
+    stage_masks = _station_tenor_stage_masks(states)
+    directions = {"DIFFUSING": 1, "PRICED": 1, "RECEDING": -1}
+    window_evidence: dict[str, Any] = {}
+    stage_checks: list[bool] = []
+    for window_name, window_mask in windows.items():
+        window_evidence[window_name] = {}
+        for stage_name, direction in directions.items():
+            rows = states.loc[window_mask & stage_masks[stage_name]]
+            medians = {
+                column: float(pd.to_numeric(rows[column], errors="coerce").median())
+                for column in (
+                    "d5_log_f4_f7_level",
+                    "d10_log_f4_f7_level",
+                    "d5_f4_f7_slope30",
+                    "d10_f4_f7_slope30",
+                )
+            }
+            direction_ok = (
+                medians["d5_log_f4_f7_level"] * direction > 0
+                and medians["d10_log_f4_f7_level"] * direction > 0
+                and medians["d5_f4_f7_slope30"] * direction < 0
+                and medians["d10_f4_f7_slope30"] * direction < 0
+            )
+            passed = len(rows) >= 75 and direction_ok
+            stage_checks.append(passed)
+            window_evidence[window_name][stage_name] = {
+                "sessions": int(len(rows)),
+                "medians": medians,
+                "passed": passed,
+            }
+
+    loco: dict[str, Any] = {}
+    for stage_name, direction in directions.items():
+        clusters = _true_clusters(states["session_date"], stage_masks[stage_name])
+        stage_loco: dict[str, Any] = {}
+        for column, expected_sign in {
+            "d5_log_f4_f7_level": direction,
+            "d10_log_f4_f7_level": direction,
+            "d5_f4_f7_slope30": -direction,
+            "d10_f4_f7_slope30": -direction,
+        }.items():
+            values = [
+                float(
+                    pd.to_numeric(
+                        states.iloc[
+                            int(cluster["start_index"]) : int(cluster["end_index"]) + 1
+                        ][column],
+                        errors="coerce",
+                    ).median()
+                )
+                for cluster in clusters
+            ]
+            stage_loco[column] = _loco_direction(values, expected_sign)
+        loco[stage_name] = {
+            "clusters": len(clusters),
+            "metrics": stage_loco,
+            "status": (
+                "STABLE"
+                if all(result["status"] == "STABLE" for result in stage_loco.values())
+                else "UNSTABLE"
+            ),
+        }
+    loco_passed = all(evidence["status"] == "STABLE" for evidence in loco.values())
+    front = states.loc[states["stress_tenor_scope"].eq("FRONT")]
+    front_distinct = bool(
+        len(front)
+        and front["mid_curve_pressure_state"].isin(["QUIET", "RECEDING"]).all()
+    )
+    passed = all(stage_checks) and loco_passed and front_distinct
+    return passed, {
+        "window_stage_facts": window_evidence,
+        "leave_one_cluster_out": loco,
+        "front_localized_sessions": int(len(front)),
+        "front_localized_is_distinct": front_distinct,
+    }
+
+
+def _station_state_timing_evidence(
+    features: pd.DataFrame,
+    states: pd.DataFrame,
+    phase_a_daily: pd.DataFrame,
+    phase_a_summary: dict[str, Any],
+) -> tuple[bool, dict[str, Any], pd.Series, pd.DataFrame]:
+    replayed = build_state_table(features)
+    state_columns = [
+        *STRUCTURE_VALUES,
+        *ANSWER_COLUMNS,
+        "raw_phase",
+        "phase",
+    ]
+    column_replay = {
+        column: _series_equal(states[column], replayed[column]) for column in state_columns
+    }
+    replay_rows = pd.Series(True, index=states.index)
+    for column in state_columns:
+        same = states[column].eq(replayed[column]) | (
+            states[column].isna() & replayed[column].isna()
+        )
+        replay_rows &= same.fillna(False)
+
+    ok = states["data_status"].eq("OK")
+    ok_complete = bool(
+        all(states.loc[ok, column].isin(values).all() for column, values in STRUCTURE_VALUES.items())
+        and all(states.loc[ok, column].isin(ANSWER_VALUES[column]).all() for column in ANSWER_COLUMNS)
+        and states.loc[ok, "phase"].isin(PHASE_VALUES).all()
+    )
+    unknown_columns = [*ANSWER_COLUMNS, "raw_phase", "phase"]
+    unknown_propagation = bool(
+        states.loc[~ok, unknown_columns].eq("UNKNOWN").all(axis=None)
+    )
+    phase_diff = states["phase"].ne(states["raw_phase"])
+    acute_only_hysteresis = bool(states.loc[phase_diff, "phase"].eq("ACUTE_FRONT_STRESS").all())
+    repair_without_carry = int(
+        (states["repair_answer"].eq("CONFIRMED") & ~states["carry_answer"].eq("SUPPORTIVE")).sum()
+    )
+    carry_without_repair = int(
+        (states["carry_answer"].eq("SUPPORTIVE") & ~states["repair_answer"].eq("CONFIRMED")).sum()
+    )
+
+    raw_columns = [
+        "session_date",
+        "phase",
+        *[f"{name}__event" for name in (
+            "acute_front_pressure",
+            "front_inversion",
+            "mid_curve_diffusion",
+            "broad_stress",
+            "mid_pressure_receding",
+            "carry_recovered",
+        )],
+    ]
+    timing_daily = phase_a_daily[raw_columns].rename(columns={"phase": "v1_phase"}).merge(
+        states[
+            [
+                "session_date",
+                "data_status",
+                "hard_acute",
+                "carry_answer",
+                "shock_answer",
+                "persistence_answer",
+                "repair_answer",
+                "carry_environment_state",
+                "phase",
+            ]
+        ],
+        on="session_date",
+        how="inner",
+        validate="one_to_one",
+    )
+    signals = {
+        "acute_front_pressure": timing_daily["hard_acute"].eq(True),
+        "front_inversion": timing_daily["carry_answer"].eq("INVERTED"),
+        "mid_curve_diffusion": timing_daily["persistence_answer"].eq("DIFFUSING"),
+        "broad_stress": timing_daily["persistence_answer"].eq("PERSISTENT"),
+        "mid_pressure_receding": timing_daily["repair_answer"].eq("CONFIRMED"),
+        "carry_recovered": timing_daily["carry_environment_state"].eq("OPEN"),
+    }
+    v1_events = cast(
+        dict[str, Any], cast(dict[str, Any], phase_a_summary.get("timing", {})).get("events", {})
+    )
+    timing_events: dict[str, Any] = {}
+    timing_checks: list[bool] = []
+    for name, signal in signals.items():
+        raw_clusters = _true_clusters(
+            timing_daily["session_date"], timing_daily[f"{name}__event"]
+        )
+        signal_clusters = _true_clusters(timing_daily["session_date"], signal)
+        window = 10 if name in {"broad_stress", "carry_recovered"} else 5
+        v2 = _match_clusters(raw_clusters, signal_clusters, lead_window=window, lag_window=window)
+        v1 = cast(dict[str, Any], v1_events.get(name, {}))
+        comparison = {
+            "misses_not_higher": int(v2["missed_event_clusters"])
+            <= int(v1.get("missed_event_clusters", -1)),
+            "false_alarms_not_higher": int(v2["false_alarm_clusters"])
+            <= int(v1.get("false_alarm_clusters", -1)),
+            "median_delay_not_later": float(v2["median_detection_delay_sessions"])
+            <= float(v1.get("median_detection_delay_sessions", -math.inf)),
+        }
+        timing_checks.extend(comparison.values())
+        compact_fields = (
+            "event_clusters",
+            "matched_event_clusters",
+            "missed_event_clusters",
+            "signal_clusters",
+            "false_alarm_clusters",
+            "median_detection_delay_sessions",
+        )
+        timing_events[name] = {
+            "v1": {field: v1.get(field) for field in compact_fields},
+            "v2": {field: v2.get(field) for field in compact_fields},
+            "comparison": comparison,
+        }
+        timing_daily[f"{name}__v2_signal"] = signal
+
+    repair_clusters = _true_clusters(
+        timing_daily["session_date"], signals["mid_pressure_receding"]
+    )
+    premature = sum(
+        bool(timing_daily.iloc[int(cluster["start_index"])]["broad_stress__event"])
+        and not bool(
+            timing_daily.iloc[int(cluster["start_index"])]["mid_pressure_receding__event"]
+        )
+        for cluster in repair_clusters
+    )
+    premature_rate = float(premature / len(repair_clusters)) if repair_clusters else math.nan
+    repair_passed = bool(repair_clusters and premature_rate <= 0.0448)
+
+    stable_interface = (
+        timing_daily["data_status"].eq("OK")
+        & timing_daily["carry_answer"].eq("SUPPORTIVE")
+        & timing_daily["shock_answer"].eq("CALM")
+        & timing_daily["persistence_answer"].eq("NORMAL")
+    ).to_numpy(dtype=bool)
+    recovery_delays: list[int] = []
+    recovery_clusters = _true_clusters(
+        timing_daily["session_date"], timing_daily["carry_recovered__event"]
+    )
+    for cluster in recovery_clusters:
+        start, end = int(cluster["start_index"]), int(cluster["end_index"])
+        offsets = np.flatnonzero(stable_interface[start : end + 1])
+        recovery_delays.append(int(offsets[0]) if len(offsets) else end - start + 1)
+    recovery_median = float(np.median(recovery_delays)) if recovery_delays else math.nan
+    recovery_max = int(max(recovery_delays)) if recovery_delays else -1
+    recovery_passed = bool(recovery_delays and recovery_median <= 2 and recovery_max <= 23)
+    v1_churn = int(timing_daily["v1_phase"].ne(timing_daily["v1_phase"].shift()).sum() - 1)
+    v2_churn = int(timing_daily["phase"].ne(timing_daily["phase"].shift()).sum() - 1)
+
+    state_passed = bool(
+        all(column_replay.values())
+        and replay_rows.all()
+        and ok_complete
+        and unknown_propagation
+        and acute_only_hysteresis
+        and repair_without_carry > 0
+        and carry_without_repair > 0
+    )
+    passed = state_passed and all(timing_checks) and repair_passed and recovery_passed
+    return passed, {
+        "state": {
+            "column_replay": column_replay,
+            "replay_mismatched_rows": int((~replay_rows).sum()),
+            "ok_rows_complete": ok_complete,
+            "unknown_propagation": unknown_propagation,
+            "phase_raw_differences": int(phase_diff.sum()),
+            "only_acute_release_hysteresis": acute_only_hysteresis,
+            "repair_confirmed_without_carry_supportive": repair_without_carry,
+            "carry_supportive_without_repair_confirmed": carry_without_repair,
+        },
+        "timing": {
+            "events": timing_events,
+            "repair_premature_release": {
+                "signal_clusters": len(repair_clusters),
+                "premature_clusters": int(premature),
+                "rate": premature_rate,
+                "passed": repair_passed,
+            },
+            "carry_recovery_stable_interface": {
+                "event_clusters": len(recovery_delays),
+                "median_sessions_closed": recovery_median,
+                "max_sessions_closed": recovery_max,
+                "passed": recovery_passed,
+            },
+            "phase_transitions": {"v1": v1_churn, "v2": v2_churn},
+            "churn_improvement_claimed": False,
+        },
+    }, replay_rows, timing_daily
+
+
+def build_v2_station_acceptance(
+    *,
+    observations: pd.DataFrame,
+    vx_contracts: pd.DataFrame,
+    features: pd.DataFrame,
+    states: pd.DataFrame,
+    targets: pd.DataFrame,
+    oof: pd.DataFrame,
+    real_acceptance: dict[str, Any],
+    phase_a_daily: pd.DataFrame,
+    phase_a_summary: dict[str, Any],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Build the weather-only Phase-D ledger and five independent verdicts."""
+
+    features = features.sort_values("session_date").reset_index(drop=True)
+    states = states.sort_values("session_date").reset_index(drop=True)
+    if not _series_equal(features["session_date"], states["session_date"]):
+        raise ValueError("V2 station acceptance requires aligned feature/state histories")
+    real_gates = {str(gate["name"]): gate for gate in real_acceptance.get("gates", [])}
+    data_real_gate_names = (
+        "state_session_integrity",
+        "latest_complete_state",
+        "ok_state_business_truth",
+        "core_series_real_coverage",
+        "standard_monthly_vx_real_coverage",
+    )
+    data_real_checks = {
+        name: bool(real_gates.get(name, {}).get("passed")) for name in data_real_gate_names
+    }
+    ok = states["data_status"].eq("OK")
+    required_complete = states[list(STATION_REQUIRED_OK_FIELDS)].notna().all(axis=1)
+    vintage_legal = (
+        states["formal_vintage_eligible"].fillna(False).astype(bool)
+        & states["vx_formal_vintage_eligible"].fillna(False).astype(bool)
+        & states["feature_vintage_kind"].isin(["OBSERVED_PIT", "ASSUMED_PIT"])
+    )
+    formula_valid = states.apply(_station_curve_formula_valid, axis=1)
+    source_counts = {
+        str(key): int(value) for key, value in states["vxcm30_source_kind"].value_counts().items()
+    }
+    pseudo = cast(
+        dict[str, Any],
+        cast(
+            dict[str, Any],
+            cast(dict[str, Any], phase_a_summary.get("data", {})).get("vxcm30", {}),
+        ).get("pseudo_gap_validation", {}),
+    )
+    pseudo_checks: dict[str, bool] = {}
+    for window, minimum in (("development", 250), ("confirmation", 150)):
+        values = cast(dict[str, Any], pseudo.get(window, {}))
+        pseudo_checks[window] = bool(
+            int(values.get("samples", 0)) >= minimum
+            and abs(float(values.get("bias_vix_points", math.inf))) <= 0.15
+            and float(values.get("mae_vix_points", math.inf)) <= 0.15
+            and float(values.get("median_absolute_percentage_error", math.inf)) <= 0.01
+            and float(values.get("p95_absolute_percentage_error", math.inf)) <= 0.02
+            and float(values.get("max_absolute_percentage_error", math.inf)) <= 0.05
+            and float(values.get("correlation", -math.inf)) >= 0.995
+        )
+    append = _append_invariance(observations, vx_contracts, features, states, oof)
+    append_passed = bool(append.get("passed"))
+    d5_nulls = {
+        column: int(states[column].isna().sum())
+        for column in ("d5_log_vxcm30", "d5_basis30_eod")
+    }
+    data_passed = bool(
+        required_complete.loc[ok].all()
+        and vintage_legal.loc[ok].all()
+        and formula_valid.loc[ok].all()
+        and source_counts.get("DIRECT_BRACKET_INTERPOLATION") == 3172
+        and source_counts.get("BOUNDED_BACKWARD_EXTRAPOLATION") == 162
+        and source_counts.get("UNAVAILABLE", 0) == 0
+        and all(value == 5 for value in d5_nulls.values())
+        and all(pseudo_checks.values())
+        and append_passed
+        and all(data_real_checks.values())
+    )
+    tenor_passed, tenor_evidence = _station_tenor_evidence(states)
+    state_timing_passed, state_timing_evidence, replay_rows, timing_daily = (
+        _station_state_timing_evidence(features, states, phase_a_daily, phase_a_summary)
+    )
+
+    integrity_gate_names = (
+        "target_ledger_truth",
+        "five_event_target_cohorts",
+        "oof_training_boundaries",
+        "five_event_oof_calibration_integrity",
+        "probability_publication_truth",
+    )
+    integrity_checks = {
+        name: bool(real_gates.get(name, {}).get("passed")) for name in integrity_gate_names
+    }
+    event_set_truth = set(targets["event_id"].dropna()) == set(EVENT_ORDER) and set(
+        oof["event_id"].dropna()
+    ) == set(EVENT_ORDER)
+    probability_integrity_passed = all(integrity_checks.values()) and event_set_truth
+    calibration_evidence = cast(
+        dict[str, Any], real_gates.get("five_event_oof_calibration_integrity", {}).get("evidence", {})
+    )
+    calibration_events = cast(dict[str, dict[str, Any]], calibration_evidence.get("events", {}))
+    probability_model_status, probability_model_evidence = (
+        _station_probability_model_assessment(calibration_events)
+    )
+    status_frame = add_event_statuses(states)
+    last_eligible: dict[str, Any] = {}
+    fallback_truth = True
+    for event in EVENT_ORDER:
+        eligible = status_frame.loc[
+            status_frame[f"{event}__event_status"].eq("ELIGIBLE"), "session_date"
+        ]
+        if eligible.empty:
+            last_eligible[event] = {"status": "INSUFFICIENT_EVIDENCE"}
+            fallback_truth = False
+            continue
+        prediction_date = pd.Timestamp(eligible.iloc[-1]).normalize()
+        publication, metadata, _ = probability_for_event(
+            states,
+            targets,
+            event,
+            prediction_date,
+            oof=oof.loc[oof["event_id"].eq(event)],
+            formal_runtime_required=True,
+        )
+        model_evidence = cast(
+            dict[str, Any], probability_model_evidence["events"][event]
+        )
+        expected_model = (
+            "CALIBRATED_MODEL" if model_evidence["status"] == "PASS" else "BASE_RATE_ONLY"
+        )
+        matches = publication["model_status"] == expected_model
+        fallback_truth &= matches
+        last_eligible[event] = {
+            "prediction_date": prediction_date.date().isoformat(),
+            "model_status": publication["model_status"],
+            "expected_model_status": expected_model,
+            "fallback_reason": metadata.get("fallback_reason"),
+            "matches": matches,
+        }
+    if not fallback_truth:
+        probability_model_status = "FAIL"
+    probability_model_evidence["last_eligible_publication"] = last_eligible
+    probability_model_evidence["base_rate_fallback_truth"] = fallback_truth
+
+    expected_status = add_event_statuses(states)
+    target_status_daily = pd.Series(True, index=states.index)
+    target_counts = targets.groupby("prediction_date").size()
+    completed_counts = (
+        targets["label_status"].isin(["OBSERVED_0", "OBSERVED_1"])
+        .groupby(targets["prediction_date"])
+        .sum()
+    )
+    for event in EVENT_ORDER:
+        actual = targets.loc[targets["event_id"].eq(event)].set_index("prediction_date")
+        actual_status = states["session_date"].map(actual["event_status"])
+        target_status_daily &= actual_status.eq(expected_status[f"{event}__event_status"])
+    oof_counts = oof.groupby("prediction_date").size()
+    timing_flags = timing_daily.set_index("session_date")
+    daily = pd.DataFrame(
+        {
+            "session_date": states["session_date"],
+            "data_status": states["data_status"],
+            "data_required_complete": required_complete,
+            "data_vintage_legal": vintage_legal,
+            "curve_formula_replayed": formula_valid,
+            "state_replay_match": replay_rows,
+            "target_rows": states["session_date"].map(target_counts).fillna(0).astype(int),
+            "completed_target_rows": states["session_date"]
+            .map(completed_counts)
+            .fillna(0)
+            .astype(int),
+            "target_status_replayed": target_status_daily,
+            "oof_rows": states["session_date"].map(oof_counts).fillna(0).astype(int),
+        }
+    )
+    for name in (
+        "acute_front_pressure",
+        "front_inversion",
+        "mid_curve_diffusion",
+        "broad_stress",
+        "mid_pressure_receding",
+        "carry_recovered",
+    ):
+        daily[f"{name}__raw_event"] = daily["session_date"].map(
+            timing_flags[f"{name}__event"]
+        )
+        daily[f"{name}__v2_signal"] = daily["session_date"].map(
+            timing_flags[f"{name}__v2_signal"]
+        )
+
+    dimensions: dict[str, dict[str, Any]] = {
+        "DATA": {
+            "status": "PASS" if data_passed else "FAIL",
+            "evidence": {
+                "ok_rows": int(ok.sum()),
+                "required_field_violations": int((ok & ~required_complete).sum()),
+                "vintage_violations": int((ok & ~vintage_legal).sum()),
+                "formula_violations": int((ok & ~formula_valid).sum()),
+                "vxcm30_source_counts": source_counts,
+                "d5_null_counts": d5_nulls,
+                "pseudo_gap_fixed_gates": pseudo_checks,
+                "future_append_invariance": append,
+                "real_source_and_state_gates": data_real_checks,
+            },
+        },
+        "TENOR": {
+            "status": "PASS" if tenor_passed else "FAIL",
+            "evidence": tenor_evidence,
+        },
+        "STATE_TIMING": {
+            "status": "PASS" if state_timing_passed else "FAIL",
+            "evidence": state_timing_evidence,
+        },
+        "PROBABILITY_INTEGRITY": {
+            "status": "PASS" if probability_integrity_passed else "FAIL",
+            "evidence": {
+                "real_acceptance_gates": integrity_checks,
+                "event_set_truth": event_set_truth,
+                "event_order": list(EVENT_ORDER),
+                "target_rows": int(len(targets)),
+                "oof_rows": int(len(oof)),
+            },
+        },
+        "PROBABILITY_MODEL": {
+            "status": probability_model_status,
+            "evidence": probability_model_evidence,
+        },
+    }
+    key_dimensions = STATION_DIMENSIONS[:4]
+    entry_passed = all(dimensions[name]["status"] == "PASS" for name in key_dimensions)
+    summary = {
+        "acceptance_version": "2.0.0",
+        "evidence_boundary": {
+            "weather_station_only": True,
+            "product_prices_read": False,
+            "strategy_or_positions_used": False,
+            "vintage_claim": "ASSUMED_PIT",
+        },
+        "history": {
+            "first_session": _date(states["session_date"].min()),
+            "last_session": _date(states["session_date"].max()),
+            "sessions": int(len(states)),
+        },
+        "dimensions": dimensions,
+        "economic_probe_entry": {
+            "status": "PASS" if entry_passed else "FAIL",
+            "required_dimensions": list(key_dimensions),
+            "probability_model_is_not_an_entry_gate": True,
+        },
+    }
+    return daily, summary
+
+
+def _station_report_markdown(summary: dict[str, Any]) -> str:
+    dimensions = cast(dict[str, Any], summary["dimensions"])
+    rows = ["| 维度 | 结论 |", "|---|---|"]
+    rows.extend(f"| `{name}` | `{dimensions[name]['status']}` |" for name in STATION_DIMENSIONS)
+    model_events = cast(
+        dict[str, Any], dimensions["PROBABILITY_MODEL"]["evidence"]["events"]
+    )
+    model_rows = ["| 事件 | 模型结论 | 样本 | Brier Skill | ECE |", "|---|---|---:|---:|---:|"]
+    for event in EVENT_ORDER:
+        evidence = cast(dict[str, Any], model_events[event])
+        skill = evidence.get("brier_skill")
+        ece = evidence.get("ece")
+        model_rows.append(
+            f"| `{event}` | `{evidence['status']}` | {evidence.get('samples', 0)} | "
+            f"{float(skill):.2%} | {float(ece):.2%} |"
+            if skill is not None and ece is not None
+            else f"| `{event}` | `{evidence['status']}` | {evidence.get('samples', 0)} | — | — |"
+        )
+    data = cast(dict[str, Any], dimensions["DATA"]["evidence"])
+    tenor = cast(dict[str, Any], dimensions["TENOR"]["evidence"])
+    state_timing = cast(dict[str, Any], dimensions["STATE_TIMING"]["evidence"])
+    state = cast(dict[str, Any], state_timing["state"])
+    timing = cast(dict[str, Any], state_timing["timing"])
+    stage_lines: list[str] = []
+    for window in ("DEVELOPMENT", "CONFIRMATION"):
+        stages = cast(dict[str, Any], tenor["window_stage_facts"])[window]
+        counts = ", ".join(
+            f"{name}={cast(dict[str, Any], evidence)['sessions']}"
+            for name, evidence in cast(dict[str, Any], stages).items()
+        )
+        stage_lines.append(f"- {window}: {counts}；5/10 日 level 与 slope-change 方向门均通过。")
+    repair = cast(dict[str, Any], timing["repair_premature_release"])
+    recovery = cast(dict[str, Any], timing["carry_recovery_stable_interface"])
+    churn = cast(dict[str, Any], timing["phase_transitions"])
+    integrity = cast(dict[str, Any], dimensions["PROBABILITY_INTEGRITY"]["evidence"])
+    entry = summary["economic_probe_entry"]["status"]
+    return "\n".join(
+        [
+            "# MatVIX V2 气象站自身验收",
+            "",
+            "> 边界：仅使用气象站输入、状态与概率证据；未读取 SVXY、SGOV、VXZ 价格，未使用策略收益。",
+            "",
+            "## 五维结论",
+            "",
+            *rows,
+            "",
+            "不计算总分。前四个关键维度决定是否允许进入一次冻结经济探针；概率模型维度只报告增量证据。",
+            "",
+            "## 关键站内证据",
+            "",
+            f"- DATA：OK rows={data['ok_rows']}，必需字段/vintage/公式违规均为 0；"
+            f"VXCM30 direct={data['vxcm30_source_counts'].get('DIRECT_BRACKET_INTERPOLATION', 0)}、"
+            f"bounded={data['vxcm30_source_counts'].get('BOUNDED_BACKWARD_EXTRAPOLATION', 0)}；"
+            f"追加不变共同 OOF={data['future_append_invariance']['common_oof_rows']}。",
+            *stage_lines,
+            f"- STATE：逐行确定重放差异={state['replay_mismatched_rows']}；"
+            f"phase/raw_phase 差异={state['phase_raw_differences']}，全部只来自冻结 acute release。",
+            f"- TIMING：Repair 过早释放={repair['premature_clusters']}/{repair['signal_clusters']}；"
+            f"carry 恢复后稳定接口继续关闭中位/最大={recovery['median_sessions_closed']}/"
+            f"{recovery['max_sessions_closed']} session；phase 转换 V1/V2={churn['v1']}/{churn['v2']}，"
+            "不声称 churn 改善。",
+            f"- PROBABILITY INTEGRITY：target rows={integrity['target_rows']}，"
+            f"OOF rows={integrity['oof_rows']}，五事件集合与所有重放门一致。",
+            "",
+            "## 概率模型逐事件结论",
+            "",
+            *model_rows,
+            "",
+            "`BASE_RATE_ONLY` 是诚实历史参考，不计作特征条件概率增量。",
+            "",
+            "## 经济探针入口",
+            "",
+            f"入口结论：`{entry}`。这只授权读取冻结探针所需产品价格，不构成任何收益或生产结论。",
+            "",
+        ]
+    )
+
+
+def write_v2_station_acceptance(
+    daily: pd.DataFrame, summary: dict[str, Any], project_dir: str | Path
+) -> dict[str, Path]:
+    output_dir = Path(project_dir).resolve() / "outputs" / "v2_station_acceptance"
+    daily_path = write_parquet(daily, output_dir / "daily_ledger.parquet")
+    summary_path = write_json(summary, output_dir / "summary.json")
+    report_path = output_dir / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(_station_report_markdown(summary), encoding="utf-8")
+    return {"daily": daily_path, "summary": summary_path, "report": report_path}

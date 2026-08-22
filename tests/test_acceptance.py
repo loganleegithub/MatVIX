@@ -14,6 +14,9 @@ from matvix.acceptance import (
     _calibration_integrity_passes,
     _completed_calibrated_validation,
     _platt_row_is_arithmetically_valid,
+    _station_curve_formula_valid,
+    _station_probability_model_assessment,
+    _station_tenor_stage_masks,
     build_real_acceptance_report,
 )
 from matvix.calendar import decision_as_of
@@ -236,6 +239,72 @@ def test_calibration_integrity_does_not_require_model_publication_acceptance() -
     assert _calibration_integrity_passes(events, []) is True
     events["broad_stress_persists_10d"]["calibrated_oof"] = 0
     assert _calibration_integrity_passes(events, []) is False
+
+
+def test_station_curve_formula_replays_f1_f7_facts() -> None:
+    settles = [18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0]
+    days = [10.0, 40.0, 70.0, 100.0, 130.0, 160.0, 190.0]
+    row = pd.Series(
+        {
+            "vx_contract_ids": [f"VX{i}" for i in range(1, 8)],
+            "vx_settles": settles,
+            "vx_days_to_final": days,
+            "front_curve_level": 18.5,
+            "f4_f7_level": 22.5,
+            "f4_f7_slope30": np.log(24.0 / 21.0) * 30.0 / 90.0,
+            "f4_f7_inversion_share": 0.0,
+            "front_to_mid_log_ratio": np.log(22.5 / 18.5),
+            "vxcm30": 18.0 / 3.0 + 19.0 * 2.0 / 3.0,
+            "vxcm30_source_kind": "DIRECT_BRACKET_INTERPOLATION",
+            "vxcm30_methodology": "VXCM30_LINEAR_30D_V2",
+        }
+    )
+
+    assert _station_curve_formula_valid(row) is True
+    row["f4_f7_level"] = 99.0
+    assert _station_curve_formula_valid(row) is False
+
+
+def test_station_probability_model_assessment_preserves_mixed_evidence() -> None:
+    events = {
+        event: {
+            "validation_complete": True,
+            "validation": {"accepted": True, "samples": 252},
+        }
+        for event in EVENT_ORDER
+    }
+    events["broad_stress_persists_10d"] = {
+        "validation_complete": False,
+        "validation": {"accepted": False, "samples": 191},
+    }
+    events["carry_environment_recovers_10d"] = {
+        "validation_complete": True,
+        "validation": {"accepted": False, "samples": 252},
+    }
+
+    status, evidence = _station_probability_model_assessment(events)
+
+    assert status == "FAIL"
+    assert evidence["events"]["acute_front_stress_5d"]["status"] == "PASS"
+    assert evidence["events"]["broad_stress_persists_10d"]["status"] == (
+        "INSUFFICIENT_EVIDENCE"
+    )
+    assert evidence["events"]["carry_environment_recovers_10d"]["status"] == "FAIL"
+
+
+def test_station_tenor_stage_masks_require_broad_scope_for_diffusing_and_priced() -> None:
+    frame = pd.DataFrame(
+        {
+            "stress_tenor_scope": ["MID", "BROAD", "BROAD", "FRONT"],
+            "mid_curve_pressure_state": ["RISING", "RISING", "PRICED", "RECEDING"],
+        }
+    )
+
+    masks = _station_tenor_stage_masks(frame)
+
+    assert masks["DIFFUSING"].tolist() == [False, True, False, False]
+    assert masks["PRICED"].tolist() == [False, False, True, False]
+    assert masks["RECEDING"].tolist() == [False, False, False, True]
 
 
 def test_platt_probability_must_equal_sigmoid_of_persisted_parameters() -> None:
