@@ -8,6 +8,7 @@ import pytest
 from conftest import base_state_frame, make_observations, make_vx_history
 
 from matvix.acceptance import (
+    _audit_carry_duration_facts,
     _audit_oof_training_boundaries,
     _audit_real_observations,
     _audit_real_vx,
@@ -22,6 +23,7 @@ from matvix.acceptance import (
 from matvix.calendar import decision_as_of
 from matvix.constants import EVENT_ORDER
 from matvix.output import build_daily_output
+from matvix.probability.targets import add_carry_duration_facts
 from matvix.probability.walk_forward import ProbabilitySpec
 
 
@@ -119,6 +121,23 @@ def test_latest_complete_state_accepts_numpy_curve_arrays() -> None:
     )
 
     assert _gate(report, "latest_complete_state")["passed"] is True
+
+
+def test_carry_duration_acceptance_replays_exact_causal_facts() -> None:
+    states = base_state_frame(12)
+    states["carry_environment_state"] = "CLOSED"
+    states["front_pressure"] = True
+    states = add_carry_duration_facts(states)
+
+    passed, evidence = _audit_carry_duration_facts(states)
+    changed = states.copy()
+    changed.loc[5, "carry_spell_age"] = 99.0
+    changed_passed, changed_evidence = _audit_carry_duration_facts(changed)
+
+    assert passed is True
+    assert evidence["max_spell_age"] == 12
+    assert changed_passed is False
+    assert changed_evidence["column_replay"]["carry_spell_age"] is False
 
 
 def test_invalid_probability_arithmetic_is_a_failed_acceptance_gate() -> None:

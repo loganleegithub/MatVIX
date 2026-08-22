@@ -5,8 +5,13 @@ from typing import TypeAlias
 import numpy as np
 import pandas as pd
 
-from matvix.calendar import decision_as_of
-from matvix.constants import EVENT_HORIZONS, EVENT_ORDER, LOGISTIC_FEATURES
+from matvix.calendar import add_sessions, decision_as_of
+from matvix.constants import (
+    CARRY_DURATION_FACTS,
+    EVENT_HORIZONS,
+    EVENT_ORDER,
+    LOGISTIC_FEATURES,
+)
 
 Tri: TypeAlias = bool | None
 
@@ -53,9 +58,14 @@ def global_model_observable(row: pd.Series, event: str) -> bool:
         return False
     if not bool(row.get("formal_vintage_eligible", False)):
         return False
+    required_features = (
+        [feature for feature in LOGISTIC_FEATURES[event] if feature not in CARRY_DURATION_FACTS]
+        if event == "carry_environment_recovers_10d"
+        else LOGISTIC_FEATURES[event]
+    )
     return all(
         feature in row.index and row.get(feature) is not None and not pd.isna(row.get(feature))
-        for feature in LOGISTIC_FEATURES[event]
+        for feature in required_features
     )
 
 
@@ -75,6 +85,43 @@ def add_event_statuses(frame: pd.DataFrame) -> pd.DataFrame:
             event_status(row, event) for _, row in result.iterrows()
         ]
         result[f"{event}__onset"] = [_event_onset(row, event) for _, row in result.iterrows()]
+    return result
+
+
+def add_carry_duration_facts(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add causal Carry spell age without bridging non-eligible rows or session gaps."""
+
+    if "session_date" not in frame:
+        raise ValueError("Carry duration facts require session_date")
+    result = frame.copy()
+    dates = pd.to_datetime(result["session_date"], errors="coerce").dt.normalize()
+    if dates.isna().any():
+        raise ValueError("Carry duration facts contain an invalid session_date")
+
+    ages = pd.Series(np.nan, index=result.index, dtype=float)
+    recovering = pd.Series(np.nan, index=result.index, dtype=float)
+    prior_date: pd.Timestamp | None = None
+    prior_eligible = False
+    prior_age = 0
+    for index in dates.sort_values(kind="stable").index:
+        row = result.loc[index]
+        current_date = pd.Timestamp(dates.loc[index]).normalize()
+        contiguous = prior_date is not None and current_date == add_sessions(prior_date, 1)
+        status = event_status(row, "carry_environment_recovers_10d")
+        if status == "ELIGIBLE":
+            age = prior_age + 1 if contiguous and prior_eligible else 1
+            ages.loc[index] = float(age)
+            recovering.loc[index] = float(row.get("carry_environment_state") == "RECOVERING")
+            prior_age = age
+            prior_eligible = True
+        else:
+            prior_age = 0
+            prior_eligible = False
+        prior_date = current_date
+
+    result["carry_spell_age"] = ages
+    result["log1p_carry_spell_age"] = np.log1p(ages)
+    result["carry_recovering_flag"] = recovering
     return result
 
 
@@ -125,7 +172,7 @@ def build_target_ledger(frame: pd.DataFrame) -> pd.DataFrame:
     if the event triggers early.
     """
 
-    state = add_event_statuses(frame).reset_index(drop=True)
+    state = add_event_statuses(add_carry_duration_facts(frame)).reset_index(drop=True)
     records: list[dict[str, object]] = []
     for index, row in state.iterrows():
         prediction_date = pd.Timestamp(row["session_date"]).normalize()

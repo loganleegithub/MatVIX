@@ -319,18 +319,22 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - layer：PROBABILITY
 - observed symptom：V2 predictors 缺少 spell age；恢复率从 age 1–2 的约 63–66% 降至 age
   11–20 的约 17–19%。
-- reproduction command：同上；见 summary 的 `carry_duration_conditioned_10d`。
-- causal evidence：206/206 leave-one-spell-out 保持负方向；固定 duration raw OOF Skill +35.19%。
+- reproduction command：`.venv/bin/python -m matvix build-history --project-dir .`，随后
+  `.venv/bin/python -m matvix train-probabilities --full-rebuild --project-dir .` 与
+  `.venv/bin/python -m matvix accept-real --date 2026-08-20 --project-dir .`。
+- causal evidence：206/206 Stage-A leave-one-spell-out 保持负方向；正式 duration raw OOF Skill
+  +35.19%。rolling-intercept published Skill +34.67%，但 ECE 7.413% 超过 7.000% 上限；
+  `2026-08-13` 最近 eligible 日的严格 as-of ECE 为 8.312%。
 - business consequence：不按 duration conditioning 会系统混合早期可恢复和长 spell 低恢复状态。
 - minimal repair：仅增加 `log1p_carry_spell_age` 与 `carry_recovering_flag`，保持 direct 10D 标签。
 - rejected alternatives：首版加入 SPX/VVIX/VRP 包、survival library、标签或 horizon 改写。
-- affected existing files：未来 state duration、constants/config、walk-forward、output/acceptance 与测试；
-  本轮未修改。
-- semantic/version impact：若施工则 feature/probability/schema/model/package 3.0.0。
+- affected existing files：state duration、constants/config、probability history fingerprint、acceptance
+  与测试；未新增依赖或候选特征。
+- semantic/version impact：feature/probability/schema/model/package 为 3.0.0，标签与 horizon 不变。
 - station acceptance criterion：duration 不跨 UNKNOWN；两窗方向不系统反转；正式 published OOF
   同时满足 Skill≥2%、ECE≤7%，且 reliability 不倒置。
 - economic relevance：可能改善 Carry 风险识别，但未读取价格，不能声称改善 Short 风险。
-- status：`AUDIT_CONFIRMED / SPEC_FROZEN / CANDIDATE_ECE_FAIL / IMPLEMENTATION_AUTHORIZED`
+- status：`IMPLEMENTED / FORMAL_HISTORICAL_REPLAY_FAIL_ECE / CONTRACT_STOP`
 
 ### 9.3 `PROB-BROAD-002`
 
@@ -857,6 +861,69 @@ STATE-CHURN-002=NOT_RUN
 STAGE_D_NOT_RUN
 ADAPTER_BLOCKED
 ECONOMIC_PROBE_BLOCKED
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+### 13.2 `PROB-CARRY-002` 正式失败与停止
+
+只按冻结 predictor 顺序加入 `log1p_carry_spell_age` 与 `carry_recovering_flag`。逐 session duration
+重放通过：1,930 个 eligible rows，最大 spell age 273；`NOT_APPLICABLE`、`UNOBSERVABLE` 与 formal
+session gap 均不桥接。14 个 `accept-real` 气象站/概率完整性 gate 全部通过，但该命令只证明其各自
+层级；required conditional model 的独立门如下：
+
+```text
+latest completed published OOF = 252
+positive / negative = 66 / 186
+raw Brier Skill = 35.1912%
+raw ECE = 9.2983%
+ROLLING_INTERCEPT_252 Brier Skill = 34.6690%
+ROLLING_INTERCEPT_252 ECE = 7.4132%
+frozen maximum ECE = 7.0000%
+result = FAIL
+```
+
+最新 eligible prediction session `2026-08-13` 的严格当日 as-of gate 同样失败：Skill 35.11%、
+ECE 8.31%，公开 daily event 因而按冻结语义回退 `BASE_RATE_ONLY`，fallback reason 为
+`brier_or_ece_gate_not_met`。这不是 Carry 条件模型 PASS，也不能用强排序能力抵消校准门。
+
+published reliability quintiles 的 mean probability / observed rate 为：
+
+```text
+Q1  5.82% / 13.73%
+Q2 10.32% /  4.00%
+Q3 17.79% / 14.00%
+Q4 38.44% / 30.00%
+Q5 59.98% / 68.63%
+```
+
+本地忽略证据 hash：
+
+```text
+target_ledger.parquet  fb91968643c2b65fa28f72fa77ca485cb4db934c1e59d20fb554cf2d00939913
+oof_ledger.parquet     2331dcf3bc97ca53ba911ad45701291f3d5edc37f8a8fb548e787d3b27481899
+artifact_contract.json 3727164e805db21e00d298b3ecc287ae4dbd1a89d8bf5146d1e7ec1eef1ec679
+real_acceptance.json   19bc378a73387473ab403943eed240b07ee045922d0d1451b7b62dea739ac383
+```
+
+代码验证：228 项 pytest、Ruff、Mypy、doctor 与 `git diff --check` 全通过；相对冻结 V2 基线的
+非生成 Python 与测试净新增 521 行，仍在 1,500 行预算内。
+
+失败与 Stage-A 冻结候选的 7.41% ECE 一致。继续施工只能诉诸合同禁止的结果后改 window、
+event-specific calibrator 或额外 feature，因此本次不是开启第二轮调参，而是执行停止条件：
+
+```text
+PROB-CAL-002=PASS
+PROB-BROAD-002=BASE_RATE_REFERENCE_PASS
+PROB-CARRY-002=FAIL_ECE
+STATION_NOT_READY
+PROB-FRAGILITY-002=NOT_AUTHORIZED_TO_START_AFTER_STOP
+STATE-CHURN-002=NOT_AUTHORIZED_TO_START_AFTER_STOP
+STAGE_D=BLOCKED
+ADAPTER=BLOCKED
+ECONOMIC_PROBE=NOT_RUN
+PRODUCT_PRICES_READ=FALSE
 NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION

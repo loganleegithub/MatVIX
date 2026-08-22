@@ -44,7 +44,7 @@ _FROZEN = {
     "probability_v2.yaml": (
         "version",
         "3.0.0",
-        "fe199f2e42188acbbe528867da50fb411f78024e7a815eff2770282dd66cf400",
+        "c01a1d90d261ec216ce1ebe6fa8526b93695e7d9dc8b9588e25ae27fac4c4639",
     ),
 }
 
@@ -260,6 +260,7 @@ def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
         BASE_RATE_ONLY_EVENTS,
         EVENT_ORDER,
         FEATURE_CONDITIONAL_EVENTS,
+        LOGISTIC_FEATURES,
         PROBABILITY_VERSION,
     )
     from matvix.probability.baseline import beta_smoothed_base_rate
@@ -288,6 +289,12 @@ def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:
         for event in EVENT_ORDER
     }
     _same(errors, "probability.event_policy", expected_policy, config["event_policy"])
+    _same(
+        errors,
+        "probability.event_predictors",
+        {event: LOGISTIC_FEATURES[event] for event in EVENT_ORDER},
+        config["event_predictors"],
+    )
     _same(
         errors,
         "probability.feature_conditional_events",

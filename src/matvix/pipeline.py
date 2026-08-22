@@ -19,7 +19,7 @@ from matvix.probability.engine import (
     resolve_probability_artifacts,
     run_probability_job,
 )
-from matvix.probability.targets import add_event_statuses
+from matvix.probability.targets import add_carry_duration_facts, add_event_statuses
 from matvix.probability.walk_forward import ProbabilitySpec
 from matvix.source_identity import (
     admit_official_observations,
@@ -133,7 +133,7 @@ def build_state_history(
         reference_sessions=reference_sessions,
         minimum_valid=minimum_valid,
     )
-    states = build_state_table(scored)
+    states = add_carry_duration_facts(build_state_table(scored))
     # The persisted feature table includes raw features, rolling percentiles, and fixed-weight scores.
     return scored, states
 

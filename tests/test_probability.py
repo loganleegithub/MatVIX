@@ -28,7 +28,11 @@ from matvix.probability.engine import (
     run_probability_job,
     validate_probability_artifact_contract,
 )
-from matvix.probability.targets import build_target_ledger, event_status
+from matvix.probability.targets import (
+    add_carry_duration_facts,
+    build_target_ledger,
+    event_status,
+)
 from matvix.probability.walk_forward import (
     ProbabilitySpec,
     _fit_model,
@@ -137,6 +141,54 @@ def test_carry_recovery_uses_future_open_state() -> None:
         & (ledger.prediction_date == frame.loc[0, "session_date"])
     ].iloc[0]
     assert row.label == 1
+
+
+def test_carry_duration_facts_reset_on_unknown_not_applicable_and_gap() -> None:
+    frame = base_state_frame(8)
+    frame["carry_environment_state"] = "CLOSED"
+    frame["front_pressure"] = True
+    frame.loc[2, "data_status"] = "PARTIAL"
+    frame.loc[[3, 4], "carry_environment_state"] = "RECOVERING"
+    frame.loc[5, "carry_environment_state"] = "OPEN"
+
+    facts = add_carry_duration_facts(frame)
+
+    np.testing.assert_allclose(
+        facts["carry_spell_age"].to_numpy()[:6],
+        [1.0, 2.0, np.nan, 1.0, 2.0, np.nan],
+        equal_nan=True,
+    )
+    assert facts.loc[[0, 1, 3, 4, 6, 7], "log1p_carry_spell_age"].to_numpy() == pytest.approx(
+        np.log1p([1, 2, 1, 2, 1, 2])
+    )
+    assert facts.loc[[0, 1, 3, 4, 6, 7], "carry_recovering_flag"].tolist() == [
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+    ]
+
+    with_gap = base_state_frame(4)
+    with_gap["carry_environment_state"] = "CLOSED"
+    with_gap["front_pressure"] = True
+    with_gap = with_gap.drop(index=2).reset_index(drop=True)
+    gap_facts = add_carry_duration_facts(with_gap)
+    assert gap_facts.iloc[-1]["carry_spell_age"] == 1.0
+
+
+def test_carry_predictor_order_is_duration_conditioned_fixed_10d() -> None:
+    assert LOGISTIC_FEATURES["carry_environment_recovers_10d"] == [
+        "repair_scaled",
+        "p_d5_front_slope30",
+        "p_neg_d5_near_stress",
+        "p_d5_f4_f7_slope30",
+        "p_neg_d5_log_f4_f7_level",
+        "shock_scaled",
+        "log1p_carry_spell_age",
+        "carry_recovering_flag",
+    ]
 
 
 def test_missing_future_field_censors_not_zero() -> None:

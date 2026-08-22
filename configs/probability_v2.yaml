@@ -11,6 +11,36 @@ event_policy:
   mid_curve_pressure_accelerates_5d: FEATURE_CONDITIONAL_REQUIRED
   broad_stress_persists_10d: BASE_RATE_ONLY_EXEMPT
   carry_environment_recovers_10d: FEATURE_CONDITIONAL_REQUIRED
+event_predictors:
+  acute_front_stress_5d:
+    - carry_risk_scaled
+    - shock_scaled
+    - tail_price_scaled
+    - persistence_scaled
+    - score_change5_scaled
+    - front_confirmation_scaled
+  front_inversion_5d:
+    - p_neg_front_slope30
+    - p_neg_d5_front_slope30
+    - p_neg_basis30_eod
+    - shock_scaled
+  mid_curve_pressure_accelerates_5d:
+    - p_f4_f7_level
+    - p_d5_log_f4_f7_level
+    - p_neg_d5_f4_f7_slope30
+    - f4_f7_inversion_share
+    - shock_scaled
+    - score_change5_scaled
+  broad_stress_persists_10d: []
+  carry_environment_recovers_10d:
+    - repair_scaled
+    - p_d5_front_slope30
+    - p_neg_d5_near_stress
+    - p_d5_f4_f7_slope30
+    - p_neg_d5_log_f4_f7_level
+    - shock_scaled
+    - log1p_carry_spell_age
+    - carry_recovering_flag
 base_rate:
   max_samples: 756
   minimum_samples: 252

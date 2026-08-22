@@ -21,7 +21,7 @@ from matvix.output import validate_daily_output
 from matvix.probability.baseline import beta_smoothed_base_rate
 from matvix.probability.calibration import acceptance_metrics, apply_intercept, fit_intercept
 from matvix.probability.engine import outlook_answer, probability_for_event
-from matvix.probability.targets import add_event_statuses
+from matvix.probability.targets import add_carry_duration_facts, add_event_statuses
 from matvix.probability.walk_forward import ProbabilitySpec, runtime_contract_status
 from matvix.source_identity import OFFICIAL_OBSERVATION_IDENTITIES, VX_SETTLE_IDENTITY
 from matvix.state.transitions import build_state_table
@@ -588,6 +588,38 @@ def _event_cohort_evidence(
     }
 
 
+def _audit_carry_duration_facts(states: pd.DataFrame) -> tuple[bool, dict[str, Any]]:
+    columns = ("carry_spell_age", "log1p_carry_spell_age", "carry_recovering_flag")
+    missing = [column for column in columns if column not in states]
+    if missing:
+        return False, {"missing_columns": missing, "rows": len(states)}
+    expected = add_carry_duration_facts(states.drop(columns=list(columns)))
+    matches = {
+        column: _series_equal(states[column], expected[column]) for column in columns
+    }
+    statuses = add_event_statuses(expected)[
+        "carry_environment_recovers_10d__event_status"
+    ]
+    eligible = statuses.eq("ELIGIBLE")
+    null_truth = bool(states.loc[~eligible, list(columns)].isna().all(axis=None))
+    recovering_truth = bool(
+        states.loc[eligible, "carry_recovering_flag"].eq(
+            states.loc[eligible, "carry_environment_state"].eq("RECOVERING").astype(float)
+        ).all()
+    )
+    passed = all(matches.values()) and null_truth and recovering_truth and bool(eligible.any())
+    return passed, {
+        "rows": len(states),
+        "eligible_rows": int(eligible.sum()),
+        "max_spell_age": (
+            int(states.loc[eligible, "carry_spell_age"].max()) if eligible.any() else 0
+        ),
+        "column_replay": matches,
+        "noneligible_null_truth": null_truth,
+        "recovering_flag_truth": recovering_truth,
+    }
+
+
 def _audit_oof_training_boundaries(
     states: pd.DataFrame,
     targets: pd.DataFrame,
@@ -997,6 +1029,15 @@ def build_real_acceptance_report(
                 int(state["session_date"].duplicated().sum()) if "session_date" in state else 0
             ),
         )
+    )
+
+    try:
+        carry_duration_passed, carry_duration_evidence = _audit_carry_duration_facts(state)
+    except (KeyError, TypeError, ValueError) as exc:
+        carry_duration_passed = False
+        carry_duration_evidence = {"error": str(exc), "rows": len(state)}
+    gates.append(
+        _gate("carry_duration_fact_replay", carry_duration_passed, **carry_duration_evidence)
     )
 
     parsed_snapshot_session = pd.to_datetime(snapshot.get("session_date"), errors="coerce")

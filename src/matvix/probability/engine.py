@@ -18,7 +18,11 @@ from matvix.constants import (
     PROBABILITY_VERSION,
 )
 from matvix.probability.calibration import apply_intercept, fit_intercept
-from matvix.probability.targets import add_event_statuses, build_target_ledger
+from matvix.probability.targets import (
+    add_carry_duration_facts,
+    add_event_statuses,
+    build_target_ledger,
+)
 from matvix.probability.walk_forward import (
     ProbabilitySpec,
     build_oof_ledger,
@@ -395,7 +399,7 @@ def _normalize_state_history(state_features: pd.DataFrame) -> pd.DataFrame:
     frame = frame.sort_values("session_date", kind="stable").reset_index(drop=True)
     if frame["session_date"].duplicated().any():
         raise ValueError("Probability history must contain one row per session_date")
-    return frame
+    return add_carry_duration_facts(frame)
 
 
 def _canonical_digest_value(value: object) -> object:
@@ -762,8 +766,7 @@ def run_probability_job(
     oof_ledger: pd.DataFrame | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any], pd.DataFrame, pd.DataFrame]:
     spec = spec or ProbabilitySpec()
-    frame = state_features.copy()
-    frame["session_date"] = pd.to_datetime(frame["session_date"]).dt.normalize()
+    frame = _normalize_state_history(state_features)
     date = (
         frame["session_date"].max()
         if prediction_date is None

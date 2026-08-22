@@ -37,6 +37,12 @@ EVENT_HORIZONS = {
 }
 EVENT_ORDER = tuple(EVENT_HORIZONS)
 
+CARRY_DURATION_FACTS = (
+    "carry_spell_age",
+    "log1p_carry_spell_age",
+    "carry_recovering_flag",
+)
+
 LOGISTIC_FEATURES = {
     "acute_front_stress_5d": [
         "carry_risk_scaled",
@@ -69,6 +75,8 @@ LOGISTIC_FEATURES = {
         "p_d5_f4_f7_slope30",
         "p_neg_d5_log_f4_f7_level",
         "shock_scaled",
+        "log1p_carry_spell_age",
+        "carry_recovering_flag",
     ],
 }
 
