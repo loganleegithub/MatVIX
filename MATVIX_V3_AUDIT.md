@@ -9,8 +9,8 @@
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
 > v1.3 修订提交：本次纯文档冻结提交（以 Git 历史为准）
-> 当前裁决：`ADAPTER-002=PRICE_BLIND_IMPLEMENTATION_PASS / FROZEN FOR ONE STAGE_F PROBE`
-> 下一项：`STAGE_F RUN EXACTLY ONE FROZEN V2 VERSUS V3 ECONOMIC PROBE`
+> 当前裁决：`STAGE_F=ONE_RUN_COMPLETE / ECONOMIC_VERDICT=NO_COMPREHENSIVE_INCREMENT`
+> 下一项：`RECORD FINAL ATTRIBUTION AND PROSPECTIVE BOUNDARY; NO SECOND RUN`
 > 最高允许结论：`HISTORICAL_RESEARCH_SUPPORT / RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION`
 
 ---
@@ -465,7 +465,7 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - station acceptance criterion：合同第 6.5 节四模型、Broad reference 与 Fragility boundary 全部满足，
   且站内验收提交后工作树干净。
 - economic relevance：阶段 F 只可运行一次；成功最多 `HISTORICAL_RESEARCH_SUPPORT`，失败即拒绝。
-- status：`PRICE_BLIND_IMPLEMENTATION_PASS / STAGE_F_ONE_RUN_NEXT`
+- status：`ONE_PROBE_COMPLETE / REJECTED_BY_FROZEN_HISTORICAL_PROBE`
 
 ### 9.8 `PROB-CARRY-SATURATION-003`
 
@@ -1643,3 +1643,52 @@ NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION
 ```
+
+---
+
+## 16. 阶段 F：唯一冻结历史经济诊断
+
+### 16.1 原始运行证据与机械裁决
+
+价格盲实现提交为 `84fa1d3df2f527a4d41944cbabe0f055401d12bf`。该提交之后仅成功执行一次：
+
+```text
+.venv/bin/python -m matvix run-v3-economic-probe --project-dir .
+```
+
+命令复用了第 15.3 节冻结批次 `20260822T093334.462165Z`，`reused_existing_batch=true`；没有联网、
+provider fallback、替换批次、补价或参数重估。共同区间有 797 个 signal sessions、795 个完成的
+open-to-open sessions；首个共同 signal 为 `2023-06-16`，首次执行为 `2023-06-20`，最后 outcome
+through 为 `2026-08-20`。
+
+| Probe | V2 final NAV | V3 final NAV | V2 / V3 return | V2 / V3 MaxDD | V2 / V3 Worst-20D | 机械分类 |
+|---|---:|---:|---:|---:|---:|---|
+| Short | 10,393.2499 | 10,616.0196 | 3.9325% / 6.1602% | -16.1332% / -13.9655% | -13.965535794659623% / -13.965535794659600% | `POSITIVE` |
+| Long | 11,739.2076 | 11,739.2076 | 17.3921% / 17.3921% | -10.9271% / -10.9271% | -8.6118% / -8.6118% | `POSITIVE` |
+| Combined | 10,582.4163 | 10,809.2406 | 5.8242% / 8.0924% | -20.9681% / -21.7004% | -16.727818202191790% / -16.727818202191802% | `MIXED` |
+
+Short 的 final NAV、return、MaxDD 与浮点意义下 Worst-20D 四个布尔门为真；Long 逐日 exact；
+Combined final NAV 不劣，但 MaxDD 与浮点意义下 Worst-20D 两门为假。合同第 8.3/15.4 节规定任一
+eligible probe 为 `MIXED/NEGATIVE` 即综合失败，因此生成器如实写出：
+
+```text
+SHORT=POSITIVE
+LONG=POSITIVE
+COMBINED=MIXED
+ECONOMIC_VERDICT=NO_COMPREHENSIVE_INCREMENT
+HISTORICAL_EVIDENCE_CLASS=NO_COMPREHENSIVE_INCREMENT
+ADAPTER-002=REJECTED_BY_FROZEN_HISTORICAL_PROBE
+PRODUCTION_PROMOTION=FALSE
+```
+
+本地忽略但保留的冻结输出及 SHA-256 为：
+
+```text
+outputs/v3_economic_probe/daily_ledger.csv  2262667420ba371d25d552959b918d4ca53abae4c7293bd14b1192f568b5321e
+outputs/v3_economic_probe/report.json       5c6ff064bb1d5a63153967656aac33d1c7f707db006eb1c31e70833370c5a8b5
+outputs/v3_economic_probe/report.html       300dbf179bd90029421d6d20278d52f1e73d96a202c0d7ad7568186a367f714a
+```
+
+三个输出受存在性保护；不得删除、覆盖或运行第二次经济命令。以上结果不改变
+`PROB-FRAGILITY-002=FORMAL_REJECT_RETAINED_114_OF_252`，也不改变四模型加一个 Broad 基准率引用的
+正式气象站表面。
