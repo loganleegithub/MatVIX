@@ -16,8 +16,9 @@ trading permission.
 - `HISTORICAL_CORE_ACCEPTED`
 - `PROSPECTIVE_CONFIRMATION_PENDING`
 
-The engineering package and release tag are `3.0.1`. The frozen scientific Feature,
-State, Probability and Schema surface remains `3.0.0`; this patch release changes no
+The scientific core release tag is `matvix-v3.0.1`. Prospective evidence capture has a
+separate activation boundary, `matvix-prospective-001-activation`. The frozen scientific
+Feature, State, Probability and Schema surface remains `3.0.0`; the recorder changes no
 model, threshold or probability contract.
 
 ## Frozen V3 surface
@@ -138,6 +139,22 @@ Machine consumers read only accepted, versioned daily JSON from `/api/snapshot`.
 dashboard and `/api/status` expose freshness, event/model status and overall product
 readiness. `READY`, `DEGRADED` and `BLOCKED` are publication-health states only; all three
 remain non-trading states.
+
+After the annotated Prospective 001 activation tag exists, a successful daily publication
+writes an exclusive, read-only local prediction record before publishing its final receipt.
+The receipt binds both the exact snapshot and prediction bytes. Five or ten XNYS sessions
+later, the resolver appends a separate outcome record; it never edits the prediction.
+
+- Predictions: `data/prospective/core/predictions/YYYY-MM-DD.json`
+- Outcomes: `data/prospective/core/outcomes/YYYY-MM-DD/EVENT_ID.json`
+- Cohort: `MATVIX_V3_0_1_CORE`
+
+The Dashboard and `/api/status` show `LOCAL_CAPTURED`, `EVIDENCE_CAPTURE_GAP` or
+`PRE_ACTIVATION`, plus pending/resolved outcomes and the permanent gap count. A capture gap
+does not block publication of the current weather facts, but it is never backfilled and the
+overall product health is `DEGRADED`. The local recorder makes no timestamp-service, cloud,
+Git-push or messaging-bot call. Full rules are frozen in
+`MATVIX_PROSPECTIVE_001_CONTRACT.md`.
 
 ## Data rights
 
