@@ -25,7 +25,7 @@ from matvix.probability.targets import add_carry_duration_facts, add_event_statu
 from matvix.probability.walk_forward import ProbabilitySpec, runtime_contract_status
 from matvix.source_identity import OFFICIAL_OBSERVATION_IDENTITIES, VX_SETTLE_IDENTITY
 from matvix.state.transitions import RISK_ON_CONFIRMATION_TRANSITIONS, build_state_table
-from matvix.storage import write_json, write_parquet
+from matvix.storage import read_json, write_json, write_parquet
 from matvix.v2_audit import (
     _append_invariance,
     _loco_direction,
@@ -131,6 +131,21 @@ STATION_DIMENSIONS = (
     "STATE_TIMING",
     "PROBABILITY_INTEGRITY",
     "PROBABILITY_MODEL",
+)
+V3_STATION_DIMENSIONS = (
+    "DATA",
+    "TENOR",
+    "STATE_TIMING",
+    "PROBABILITY_INTEGRITY",
+    "PROBABILITY_MODEL",
+    "BASE_RATE_REFERENCE",
+    "FRAGILITY_BOUNDARY",
+)
+REJECTED_FRAGILITY_EVENT_ID = "calm_carry_breaks_5d"
+REJECTED_FRAGILITY_EVIDENCE_TOKENS = (
+    "REJECTED_INSUFFICIENT_PUBLISHED_OOF",
+    "completed published OOF | 252 | 114",
+    "44e7e43efb207b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770",
 )
 STATION_REQUIRED_OK_FIELDS = (
     "vxcm30",
@@ -1343,6 +1358,96 @@ def _station_probability_model_assessment(
     }
 
 
+def _station_base_rate_reference_assessment(
+    calibration_events: dict[str, dict[str, Any]],
+    probability_model_evidence: dict[str, Any],
+    oof: pd.DataFrame,
+) -> tuple[bool, dict[str, Any]]:
+    event = "broad_stress_persists_10d"
+    calibration = calibration_events.get(event, {})
+    validation = cast(dict[str, Any], calibration.get("validation", {}))
+    model_events = cast(dict[str, Any], probability_model_evidence.get("events", {}))
+    model = cast(dict[str, Any], model_events.get(event, {}))
+    latest_events = cast(
+        dict[str, Any], probability_model_evidence.get("last_eligible_publication", {})
+    )
+    latest = cast(dict[str, Any], latest_events.get(event, {}))
+    rows = oof.loc[oof["event_id"].eq(event)]
+    numeric_equal = bool(
+        len(rows)
+        and np.allclose(
+            pd.to_numeric(rows["published_probability"], errors="coerce"),
+            pd.to_numeric(rows["base_rate_at_prediction"], errors="coerce"),
+            equal_nan=False,
+        )
+    )
+    checks = {
+        "publication_policy": calibration.get("publication_policy")
+        == "BASE_RATE_ONLY_EXEMPT",
+        "validation_complete": bool(calibration.get("validation_complete")),
+        "validation_exempt_and_accepted": bool(validation.get("exempt"))
+        and bool(validation.get("accepted")),
+        "raw_oof_zero": int(calibration.get("raw_oof", -1)) == 0
+        and bool(rows["raw_probability"].isna().all()),
+        "published_equals_causal_base_rate": numeric_equal,
+        "calibration_not_applicable": bool(
+            rows["calibration_method"].eq("NOT_APPLICABLE").all()
+        ),
+        "model_count_exempt": model.get("status") == "BASE_RATE_ONLY_EXEMPT",
+        "latest_publication_base_rate_only": latest.get("model_status") == "BASE_RATE_ONLY"
+        and bool(latest.get("matches")),
+    }
+    return all(checks.values()), {
+        "event_id": event,
+        "checks": checks,
+        "reference_rows": int(len(rows)),
+        "model_pass_claimed": False,
+        "latest_eligible_publication": latest,
+    }
+
+
+def _station_fragility_boundary_assessment(
+    *,
+    project_dir: str | Path,
+    states: pd.DataFrame,
+    targets: pd.DataFrame,
+    oof: pd.DataFrame,
+    latest_snapshot: dict[str, Any],
+) -> tuple[bool, dict[str, Any]]:
+    root = Path(project_dir).resolve()
+    schema = read_json(root / "schemas" / "daily_output.schema.json")
+    probability_schema = cast(
+        dict[str, Any], cast(dict[str, Any], schema["properties"])["probability_judgment"]
+    )
+    schema_required = cast(list[str], probability_schema.get("required", []))
+    schema_properties = cast(dict[str, Any], probability_schema.get("properties", {}))
+    snapshot_events = cast(dict[str, Any], latest_snapshot.get("probability_judgment", {}))
+    audit_text = (root / "MATVIX_V3_AUDIT.md").read_text(encoding="utf-8")
+    event = REJECTED_FRAGILITY_EVENT_ID
+    checks = {
+        "event_order_absent": event not in EVENT_ORDER,
+        "logistic_config_absent": event not in LOGISTIC_FEATURES,
+        "target_ledger_absent": not bool(targets["event_id"].eq(event).any()),
+        "oof_ledger_absent": not bool(oof["event_id"].eq(event).any()),
+        "state_surface_absent": not any(event in str(column) for column in states.columns),
+        "schema_required_absent": event not in schema_required,
+        "schema_property_absent": event not in schema_properties,
+        "daily_snapshot_absent": event not in snapshot_events,
+        "rejection_evidence_retained": all(
+            token in audit_text for token in REJECTED_FRAGILITY_EVIDENCE_TOKENS
+        ),
+    }
+    return all(checks.values()), {
+        "event_id": event,
+        "checks": checks,
+        "formal_model_status": "NOT_ELIGIBLE",
+        "formal_model_pass_claimed": False,
+        "published_oof_completed": 114,
+        "required_published_oof": 252,
+        "adapter_shadow_counted_as_station_model": False,
+    }
+
+
 def _station_tenor_stage_masks(states: pd.DataFrame) -> dict[str, pd.Series]:
     broad = states["stress_tenor_scope"].eq("BROAD")
     mid = states["mid_curve_pressure_state"]
@@ -1905,6 +2010,76 @@ def build_v2_station_acceptance(
     return daily, summary
 
 
+def build_v3_station_acceptance(
+    *,
+    observations: pd.DataFrame,
+    vx_contracts: pd.DataFrame,
+    features: pd.DataFrame,
+    states: pd.DataFrame,
+    targets: pd.DataFrame,
+    oof: pd.DataFrame,
+    real_acceptance: dict[str, Any],
+    phase_a_daily: pd.DataFrame,
+    phase_a_summary: dict[str, Any],
+    latest_snapshot: dict[str, Any],
+    project_dir: str | Path,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Build the V3 weather-only acceptance with every Stage-D gate enforced."""
+
+    daily, summary = build_v2_station_acceptance(
+        observations=observations,
+        vx_contracts=vx_contracts,
+        features=features,
+        states=states,
+        targets=targets,
+        oof=oof,
+        real_acceptance=real_acceptance,
+        phase_a_daily=phase_a_daily,
+        phase_a_summary=phase_a_summary,
+    )
+    dimensions = cast(dict[str, dict[str, Any]], summary["dimensions"])
+    real_gates = {str(gate["name"]): gate for gate in real_acceptance.get("gates", [])}
+    calibration_evidence = cast(
+        dict[str, Any], real_gates.get("v3_oof_calibration_integrity", {}).get("evidence", {})
+    )
+    calibration_events = cast(dict[str, dict[str, Any]], calibration_evidence.get("events", {}))
+    probability_model_evidence = cast(
+        dict[str, Any], dimensions["PROBABILITY_MODEL"]["evidence"]
+    )
+    base_rate_passed, base_rate_evidence = _station_base_rate_reference_assessment(
+        calibration_events, probability_model_evidence, oof
+    )
+    fragility_passed, fragility_evidence = _station_fragility_boundary_assessment(
+        project_dir=project_dir,
+        states=states,
+        targets=targets,
+        oof=oof,
+        latest_snapshot=latest_snapshot,
+    )
+    dimensions["BASE_RATE_REFERENCE"] = {
+        "status": "PASS" if base_rate_passed else "FAIL",
+        "evidence": base_rate_evidence,
+    }
+    dimensions["FRAGILITY_BOUNDARY"] = {
+        "status": "PASS" if fragility_passed else "FAIL",
+        "evidence": fragility_evidence,
+    }
+    entry_passed = all(
+        dimensions[name]["status"] == "PASS" for name in V3_STATION_DIMENSIONS
+    )
+    summary["station_generation"] = "V3"
+    summary["dimension_order"] = list(V3_STATION_DIMENSIONS)
+    summary["economic_probe_entry"] = {
+        "status": "PASS" if entry_passed else "FAIL",
+        "required_dimensions": list(V3_STATION_DIMENSIONS),
+        "probability_model_is_an_entry_gate": True,
+        "stage_e_pure_document_freeze_still_required": True,
+    }
+    daily["fragility_formal_surface_absent"] = fragility_passed
+    daily["broad_base_rate_reference_valid"] = base_rate_passed
+    return daily, summary
+
+
 def _station_report_markdown(summary: dict[str, Any]) -> str:
     dimensions = cast(dict[str, Any], summary["dimensions"])
     rows = ["| 维度 | 结论 |", "|---|---|"]
@@ -1995,4 +2170,80 @@ def write_v2_station_acceptance(
     report_path = output_dir / "report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(_station_report_markdown(summary), encoding="utf-8")
+    return {"daily": daily_path, "summary": summary_path, "report": report_path}
+
+
+def _v3_station_report_markdown(summary: dict[str, Any]) -> str:
+    dimensions = cast(dict[str, Any], summary["dimensions"])
+    order = cast(list[str], summary["dimension_order"])
+    rows = ["| 维度 | 结论 |", "|---|---|"]
+    rows.extend(f"| `{name}` | `{dimensions[name]['status']}` |" for name in order)
+    model_events = cast(
+        dict[str, Any], dimensions["PROBABILITY_MODEL"]["evidence"]["events"]
+    )
+    model_rows = ["| 正式对象 | 结论 | 样本 | Brier Skill | ECE |", "|---|---|---:|---:|---:|"]
+    for event in EVENT_ORDER:
+        evidence = cast(dict[str, Any], model_events[event])
+        skill = evidence.get("brier_skill")
+        ece = evidence.get("ece")
+        if skill is None or ece is None:
+            model_rows.append(
+                f"| `{event}` | `{evidence['status']}` | {evidence.get('samples', 0)} | — | — |"
+            )
+        else:
+            model_rows.append(
+                f"| `{event}` | `{evidence['status']}` | {evidence.get('samples', 0)} | "
+                f"{float(skill):.2%} | {float(ece):.2%} |"
+            )
+    state = cast(dict[str, Any], dimensions["STATE_TIMING"]["evidence"]["state"])
+    base = cast(dict[str, Any], dimensions["BASE_RATE_REFERENCE"]["evidence"])
+    fragility = cast(dict[str, Any], dimensions["FRAGILITY_BOUNDARY"]["evidence"])
+    entry = cast(dict[str, Any], summary["economic_probe_entry"])
+    return "\n".join(
+        [
+            "# MatVIX V3 四模型气象站自身验收",
+            "",
+            "> 边界：仅使用气象站输入、状态与概率证据；未读取 SVXY、SGOV、VXZ 价格，未使用策略收益。",
+            "",
+            "## 七维独立结论",
+            "",
+            *rows,
+            "",
+            "不计算总分；七个入口维度必须全部 PASS。",
+            "",
+            "## 正式概率目录",
+            "",
+            *model_rows,
+            "",
+            f"Broad reference rows={base['reference_rows']}；只记 `BASE_RATE_ONLY_EXEMPT`，"
+            "不计模型 PASS。",
+            f"Fragility 正式模型仍为 `{fragility['formal_model_status']}`："
+            f"{fragility['published_oof_completed']}/{fragility['required_published_oof']} completed OOF；"
+            "本维度 PASS 只证明它未进入运行表面。",
+            "",
+            "## 状态发布边界",
+            "",
+            f"- phase/raw_phase 差异={state['phase_raw_differences']}；acute release="
+            f"{state['acute_release_hysteresis_rows']}；risk-on confirmation="
+            f"{state['risk_on_confirmation_count']}；非法或 risk-off 延迟="
+            f"{state['invalid_or_risk_off_delayed_rows']}。",
+            "",
+            "## 阶段 E 入口",
+            "",
+            f"`{entry['status']}`。即使 PASS，仍必须先完成价格盲的阶段 E 纯文档适配器冻结；"
+            "不构成经济改进、生产晋升或 Fragility 概率通过。",
+            "",
+        ]
+    )
+
+
+def write_v3_station_acceptance(
+    daily: pd.DataFrame, summary: dict[str, Any], project_dir: str | Path
+) -> dict[str, Path]:
+    output_dir = Path(project_dir).resolve() / "outputs" / "v3_station_acceptance"
+    daily_path = write_parquet(daily, output_dir / "daily_ledger.parquet")
+    summary_path = write_json(summary, output_dir / "summary.json")
+    report_path = output_dir / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(_v3_station_report_markdown(summary), encoding="utf-8")
     return {"daily": daily_path, "summary": summary_path, "report": report_path}

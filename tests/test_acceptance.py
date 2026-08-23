@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,7 +16,9 @@ from matvix.acceptance import (
     _calibration_integrity_passes,
     _calibration_row_is_arithmetically_valid,
     _completed_published_validation,
+    _station_base_rate_reference_assessment,
     _station_curve_formula_valid,
+    _station_fragility_boundary_assessment,
     _station_probability_model_assessment,
     _station_tenor_stage_masks,
     build_real_acceptance_report,
@@ -350,6 +353,76 @@ def test_station_probability_model_assessment_preserves_mixed_evidence() -> None
         "BASE_RATE_ONLY_EXEMPT"
     )
     assert evidence["events"]["carry_environment_recovers_10d"]["status"] == "FAIL"
+
+
+def test_station_base_rate_reference_is_separate_from_model_pass() -> None:
+    calibration = {
+        "broad_stress_persists_10d": {
+            "publication_policy": "BASE_RATE_ONLY_EXEMPT",
+            "validation_complete": True,
+            "raw_oof": 0,
+            "validation": {"accepted": True, "exempt": True, "samples": 2},
+        }
+    }
+    model_evidence = {
+        "events": {"broad_stress_persists_10d": {"status": "BASE_RATE_ONLY_EXEMPT"}},
+        "last_eligible_publication": {
+            "broad_stress_persists_10d": {
+                "model_status": "BASE_RATE_ONLY",
+                "matches": True,
+            }
+        },
+    }
+    oof = pd.DataFrame(
+        {
+            "event_id": ["broad_stress_persists_10d"] * 2,
+            "raw_probability": [np.nan, np.nan],
+            "published_probability": [0.4, 0.5],
+            "base_rate_at_prediction": [0.4, 0.5],
+            "calibration_method": ["NOT_APPLICABLE", "NOT_APPLICABLE"],
+        }
+    )
+
+    passed, evidence = _station_base_rate_reference_assessment(
+        calibration, model_evidence, oof
+    )
+
+    assert passed is True
+    assert evidence["model_pass_claimed"] is False
+    broken = oof.copy()
+    broken.loc[1, "published_probability"] = 0.6
+    assert _station_base_rate_reference_assessment(calibration, model_evidence, broken)[0] is False
+
+
+def test_station_fragility_boundary_requires_absence_and_retained_rejection() -> None:
+    root = Path(__file__).resolve().parents[1]
+    states = pd.DataFrame({"session_date": pd.to_datetime(["2026-08-20"])})
+    targets = pd.DataFrame({"event_id": ["acute_front_stress_5d"]})
+    oof = pd.DataFrame({"event_id": ["acute_front_stress_5d"]})
+    snapshot = {"probability_judgment": {"acute_front_stress_5d": {}}}
+
+    passed, evidence = _station_fragility_boundary_assessment(
+        project_dir=root,
+        states=states,
+        targets=targets,
+        oof=oof,
+        latest_snapshot=snapshot,
+    )
+
+    assert passed is True
+    assert evidence["formal_model_status"] == "NOT_ELIGIBLE"
+    contaminated = copy.deepcopy(snapshot)
+    contaminated["probability_judgment"]["calm_carry_breaks_5d"] = {}
+    assert (
+        _station_fragility_boundary_assessment(
+            project_dir=root,
+            states=states,
+            targets=targets,
+            oof=oof,
+            latest_snapshot=contaminated,
+        )[0]
+        is False
+    )
 
 
 def test_station_tenor_stage_masks_require_broad_scope_for_diffusing_and_priced() -> None:

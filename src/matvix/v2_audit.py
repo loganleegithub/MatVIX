@@ -927,26 +927,15 @@ def _append_invariance(
         if not _series_equal(expected_states[column], prefix_states[column])
     ]
     _, prefix_oof = prepare_probability_artifacts(prefix_states)
-    comparison_columns = [
-        "decision_score",
-        "base_probability",
-        "base_rate_at_prediction",
-        "training_latest_prediction_date",
-        "training_latest_outcome_available_at",
-        "base_rate_samples",
-        "base_rate_positive",
-        "base_rate_negative",
-        "training_samples",
-        "training_positive",
-        "training_negative",
-        "converged",
-        "iterations",
-        "calibrated_probability",
-        "platt_a",
-        "platt_b",
-        "calibration_samples",
-        "calibration_converged",
-    ]
+    key_columns = {"event_id", "prediction_date"}
+    outcome_resolution_columns = {"label", "label_status", "outcome_available_at"}
+    prefix_only_columns = sorted(set(prefix_oof.columns) - set(full_oof.columns))
+    full_only_columns = sorted(set(full_oof.columns) - set(prefix_oof.columns))
+    comparison_columns = sorted(
+        (set(prefix_oof.columns) & set(full_oof.columns))
+        - key_columns
+        - outcome_resolution_columns
+    )
     common = prefix_oof.merge(
         full_oof,
         on=["event_id", "prediction_date"],
@@ -966,7 +955,14 @@ def _append_invariance(
         "changed_feature_columns": changed_features,
         "changed_state_columns": changed_states,
         "changed_oof_columns": changed_oof,
-        "passed": not changed_features and not changed_states and not changed_oof,
+        "prefix_only_oof_columns": prefix_only_columns,
+        "full_only_oof_columns": full_only_columns,
+        "outcome_resolution_columns_excluded": sorted(outcome_resolution_columns),
+        "passed": not changed_features
+        and not changed_states
+        and not changed_oof
+        and not prefix_only_columns
+        and not full_only_columns,
     }
 
 

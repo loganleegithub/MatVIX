@@ -9,8 +9,8 @@
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
 > v1.3 修订提交：本次纯文档冻结提交（以 Git 历史为准）
-> 当前裁决：`STATE-CHURN-002=FORMAL_HISTORICAL_REPLAY_PASS / FOUR_MODEL_STATION_SCOPE`
-> 下一项：`STAGE_D FOUR-MODEL WEATHER-STATION ACCEPTANCE`
+> 当前裁决：`STAGE_D=SEVEN_DIMENSION_PASS / FOUR_MODEL_STATION_READY_FOR_STAGE_E_FREEZE`
+> 下一项：`STAGE_E PURE-DOCUMENT UNQUALIFIED VETO SHADOW FREEZE`
 > 最高允许结论：`HISTORICAL_RESEARCH_SUPPORT / RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION`
 
 ---
@@ -464,7 +464,7 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - station acceptance criterion：合同第 6.5 节四模型、Broad reference 与 Fragility boundary 全部满足，
   且站内验收提交后工作树干净。
 - economic relevance：阶段 F 只可运行一次；成功最多 `HISTORICAL_RESEARCH_SUPPORT`，失败即拒绝。
-- status：`AUTHORIZED_AFTER_STAGE_D / UNQUALIFIED_VETO_SHADOW_ONLY`
+- status：`STAGE_D_PASS / STAGE_E_PURE_DOCUMENT_FREEZE_NEXT`
 
 ### 9.8 `PROB-CARRY-SATURATION-003`
 
@@ -1320,6 +1320,79 @@ PROB-FRAGILITY-002=CLOSED_BY_SCOPE_FORMAL_REJECT_RETAINED
 STAGE_D=NEXT_AUTHORIZED
 ADAPTER=BLOCKED_PENDING_STAGE_D_AND_STAGE_E_DOC_FREEZE
 ECONOMIC_PROBE=NOT_RUN
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+---
+
+## 14. 阶段 D：四模型气象站完整验收
+
+新增独立命令：
+
+```bash
+.venv/bin/python -m matvix accept-v3-station --project-dir .
+```
+
+它与旧 V2 的“概率模型不参与经济入口”不同；V3 入口要求以下七维全部独立 PASS：
+
+| 维度 | 裁决 |
+|---|---|
+| DATA | PASS |
+| TENOR | PASS |
+| STATE_TIMING | PASS |
+| PROBABILITY_INTEGRITY | PASS |
+| PROBABILITY_MODEL | PASS |
+| BASE_RATE_REFERENCE | PASS |
+| FRAGILITY_BOUNDARY | PASS |
+
+验收器首次启动时暴露两个 V2 兼容缺陷，均在不改天气业务语义、模型或门槛的条件下修复：
+
+1. 旧 append helper 仍硬编码已由 V3 删除的 `decision_score/platt` 列，命令在形成裁决前崩溃；现按
+   当前 prefix/full OOF 共同 Schema 比较全部非键因果字段，并要求列集合完全一致。
+2. 首次可运行结果只因 `label / label_status / outcome_available_at` 在 cutoff 后按 5/10 日 horizon
+   自然成熟而误报 DATA FAIL。合同的追加不变门约束既有 feature/state/prediction/training/base-rate/
+   calibration/publication，不禁止未来 outcome 从 censored 变 observed；三列因此被显式列为 outcome
+   maturation，不参与预测不变性比较。最终 6,400 个共同 OOF 的所有因果字段差异为 0，feature/state
+   差异为 0，prefix/full OOF 列集合差异为 0。
+
+四个正式条件模型的冻结 252-row 裁决：
+
+| event | 正/负 | Brier Skill | ECE | 裁决 |
+|---|---:|---:|---:|---|
+| `acute_front_stress_5d` | 40/212 | 7.1313% | 3.1736% | PASS |
+| `front_inversion_5d` | 26/226 | 10.7097% | 3.0033% | PASS |
+| `mid_curve_pressure_accelerates_5d` | 117/135 | 11.7853% | 5.0768% | PASS |
+| `carry_environment_recovers_10d` | 66/186 | 36.1709% | 5.0964% | PASS |
+
+Broad 有 267 个 reference rows，逐行 `published_probability == causal_base_rate`、raw=null、
+calibration=`NOT_APPLICABLE`，只裁决为 `BASE_RATE_ONLY_EXEMPT`，不计模型 PASS。Fragility boundary
+逐项确认 EVENT_ORDER、Logistic config、target/OOF、state、Schema、daily snapshot 均无
+`calm_carry_breaks_5d`；唯一候选仍为 114/252 `NOT_ELIGIBLE`，审计 hash 继续保留。
+
+STATE_TIMING 重放差异为 0；phase/raw phase 差异只含 179 个原 acute release 与 270 个冻结 risk-on
+确认，非法或 risk-off 延迟为 0。正式输出 hash：
+
+```text
+daily_ledger.parquet  24de7e129cf2349bc18bc3aef697986af4c77184ea017c7dc2ad9423b049a7ef
+summary.json          54b4c4dd73c4f3f380e90981015b3499bd6a67fe4328c08f44bc97e7e93eba93
+report.md             10b1c08a6a547c85864a7319ccfe977aa2e42a0842479eb1c27ecd8b79a35fcd
+```
+
+阶段 D 裁决：
+
+```text
+STAGE_D=PASS
+STAGE_E_ENTRY=PASS
+FORMAL_CONDITIONAL_MODELS=4_OF_4_PASS
+BROAD=BASE_RATE_REFERENCE_PASS_NO_MODEL_PASS_CLAIM
+PROB-FRAGILITY-002=CLOSED_BY_SCOPE_FORMAL_REJECT_RETAINED
+FRAGILITY_BOUNDARY=PASS_NOT_A_MODEL_PASS
+PRODUCT_PRICES_READ=FALSE
+ADAPTER_CODE=NOT_STARTED
+ECONOMIC_PROBE=NOT_RUN
+NEXT=STAGE_E_PURE_DOCUMENT_FREEZE
 NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION
