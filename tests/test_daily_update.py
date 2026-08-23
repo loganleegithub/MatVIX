@@ -976,6 +976,35 @@ def test_outcome_conflict_stops_before_current_snapshot_and_receipt(
     assert not acceptance_receipt_path(paths, target).exists()
 
 
+def test_corrupted_bound_prediction_falls_back_to_prior_last_good(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observations, vx, target = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+    prior = sessions_in_range("2025-01-02", target.date())[-2]
+    prior_snapshot = paths.daily_output_dir / f"{prior.date().isoformat()}.json"
+    write_json(
+        {"session_date": prior.date().isoformat(), "data_status": "OK", "issues": []},
+        prior_snapshot,
+    )
+    _write_bound_receipt(paths, prior, prior_snapshot)
+    monkeypatch.setattr(daily_update, "activation_identity", lambda _root: _activated_identity())
+    result = run_daily_update(
+        tmp_path,
+        target,
+        now=decision_as_of(target) + timedelta(minutes=5),
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _prospective_candidate(target),
+    )
+    assert result.status == DailyUpdateStatus.PUBLISHED
+    prediction = prediction_record_path(tmp_path, target.date().isoformat())
+    prediction.chmod(0o644)
+
+    accepted = find_latest_accepted_snapshot(tmp_path)
+    assert accepted is not None and accepted.session_date == prior.date().isoformat()
+    assert last_good_session(paths) == prior.date().isoformat()
+
+
 def test_daily_update_failure_preserves_prior_last_good(tmp_path: Path) -> None:
     observations, vx, target = _complete_inputs()
     paths = _persist_inputs(tmp_path, observations, vx)

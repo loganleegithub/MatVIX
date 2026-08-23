@@ -17,6 +17,7 @@ from matvix.prospective import (
     PROSPECTIVE_SCHEMA_VERSION,
     SCIENTIFIC_COHORT_ID,
     ProspectiveConflictError,
+    ProspectiveCorruptionError,
     binding_for_file,
     build_prediction_record,
     outcome_record_path,
@@ -226,3 +227,25 @@ def test_target_revision_that_changes_a_frozen_label_is_an_audit_stop(
             now=outcome_at + timedelta(days=1),
             resolver_release_id=RELEASE_ID,
         )
+
+
+def test_corrupted_outcome_is_never_treated_as_resolved_or_overwritten(
+    tmp_path: Path,
+) -> None:
+    states = base_state_frame(12)
+    states.loc[2, "hard_acute"] = True
+    session, _ = _prospective_fixture(tmp_path, states)
+    outcome_at = decision_as_of(add_sessions(session, 5))
+    resolve_due_outcomes(tmp_path, now=outcome_at, resolver_release_id=RELEASE_ID)
+    path = outcome_record_path(tmp_path, session, "acute_front_stress_5d")
+    original = path.read_bytes()
+    path.chmod(0o644)
+
+    with pytest.raises(ProspectiveCorruptionError, match="not read-only"):
+        resolve_due_outcomes(
+            tmp_path,
+            now=outcome_at + timedelta(days=1),
+            resolver_release_id=RELEASE_ID,
+        )
+
+    assert path.read_bytes() == original

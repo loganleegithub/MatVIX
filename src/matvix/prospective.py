@@ -514,6 +514,11 @@ def _write_immutable(
                 handle.flush()
                 os.fsync(handle.fileno())
             os.chmod(path, 0o444)
+            readonly_descriptor = os.open(path, os.O_RDONLY)
+            try:
+                os.fsync(readonly_descriptor)
+            finally:
+                os.close(readonly_descriptor)
             _fsync_directory(path.parent)
         except Exception:
             # A partial exclusive file is deliberate evidence of a failed
