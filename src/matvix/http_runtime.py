@@ -25,6 +25,7 @@ from matvix.daily_update import frame_content_digest
 from matvix.dashboard import render_dashboard
 from matvix.pipeline import ProjectPaths
 from matvix.prospective import ProspectiveEvidenceError, validate_receipt_evidence
+from matvix.prospective_resolver import prospective_runtime_summary
 from matvix.storage import read_json, read_parquet
 
 DashboardRenderer = Callable[[dict[str, Any], pd.DataFrame | None, pd.DataFrame | None], str]
@@ -349,7 +350,9 @@ class DashboardDocumentStore:
 
     def _render(self, candidate: AcceptedSnapshot) -> bytes:
         history, oof = self._history_inputs(candidate)
-        document = self._renderer(candidate.payload, history, oof)
+        payload = dict(candidate.payload)
+        payload["_runtime_prospective_evidence"] = prospective_runtime_summary(self.paths.root)
+        document = self._renderer(payload, history, oof)
         document = inject_runtime_polling(
             document,
             candidate.session_date,
@@ -429,6 +432,7 @@ def _product_readiness(
     latest: AcceptedSnapshot | None,
     update: dict[str, Any],
     render_failure: dict[str, Any] | None,
+    prospective: Mapping[str, Any],
 ) -> tuple[str, list[str], dict[str, dict[str, Any]]]:
     """Classify publication health without granting downstream trading authority."""
 
@@ -478,6 +482,10 @@ def _product_readiness(
         reasons.append("LATEST_CANDIDATE_RENDER_FAILED")
     if str(update.get("status")) in {"FAILED", "WINDOW_EXHAUSTED", "INVALID"}:
         reasons.append(f"UPDATER_{update.get('status')}")
+    if int(prospective.get("gap_count", 0)) > 0:
+        reasons.append("EVIDENCE_CAPTURE_GAP")
+    if int(prospective.get("evidence_error_count", 0)) > 0:
+        reasons.append("PROSPECTIVE_EVIDENCE_INVALID")
 
     if blocked:
         return "BLOCKED", reasons, event_models
@@ -614,8 +622,9 @@ class DashboardHTTPRuntime:
             if latest is not None
             else "DEGRADED"
         )
+        prospective = prospective_runtime_summary(self.paths.root)
         product_status, product_reasons, event_models = _product_readiness(
-            latest, update, render_failure
+            latest, update, render_failure, prospective
         )
         snapshot_age = (
             (datetime.now(UTC).date() - date.fromisoformat(latest_session)).days
@@ -628,6 +637,7 @@ class DashboardHTTPRuntime:
             "product_status_reasons": product_reasons,
             "trading_authorized": False,
             "event_models": event_models,
+            "prospective_evidence": prospective,
             "snapshot_freshness": {
                 "session_date": latest_session,
                 "published_at": published_at,

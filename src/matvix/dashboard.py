@@ -205,6 +205,11 @@ LIVE_STATUS_SCRIPT = """
     const runtime = document.getElementById("runtime-status");
     const runtimeText = document.getElementById("runtime-status-text");
     const productStatus = document.getElementById("product-status");
+    const prospectiveStatus = document.getElementById("prospective-capture-status");
+    const prospectiveCohort = document.getElementById("prospective-cohort");
+    const prospectivePending = document.getElementById("prospective-pending");
+    const prospectiveResolved = document.getElementById("prospective-resolved");
+    const prospectiveGaps = document.getElementById("prospective-gaps");
     const update = payload.update && typeof payload.update === "object" ? payload.update : payload;
     const renderFailure = payload.render_failure || payload.dashboard_error;
     const latest = payload.latest_snapshot_session || payload.last_good_session;
@@ -216,6 +221,24 @@ LIVE_STATUS_SCRIPT = """
     if (productStatus && payload.product_status) {
       productStatus.textContent = `V3 · ${payload.product_status} · 只读研究`;
       productStatus.dataset.status = payload.product_status;
+    }
+    const prospective = payload.prospective_evidence;
+    if (prospective && typeof prospective === "object") {
+      if (prospectiveStatus) prospectiveStatus.textContent = String(
+        prospective.latest_capture_status || "PRE_ACTIVATION"
+      );
+      if (prospectiveCohort) prospectiveCohort.textContent = String(
+        prospective.scientific_cohort_id || "MATVIX_V3_0_1_CORE"
+      );
+      if (prospectivePending) prospectivePending.textContent = String(
+        prospective.pending_outcome_count ?? 0
+      );
+      if (prospectiveResolved) prospectiveResolved.textContent = String(
+        prospective.resolved_outcome_count ?? 0
+      );
+      if (prospectiveGaps) prospectiveGaps.textContent = String(
+        prospective.gap_count ?? 0
+      );
     }
     if (runtimeText) {
       const rawStatus = payload.runtime_status === "DASHBOARD_RENDER_FAILED"
@@ -356,6 +379,20 @@ button:focus-visible, summary:focus-visible {
 .product-readiness[data-status="READY"] { border-color: rgba(50, 210, 134, .5); }
 .product-readiness[data-status="DEGRADED"] { border-color: rgba(255, 178, 31, .65); }
 .product-readiness[data-status="BLOCKED"] { border-color: rgba(255, 92, 92, .7); }
+.prospective-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  min-height: 36px;
+  padding: 7px 28px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(10, 20, 35, .72);
+  color: #aeb9ca;
+  font-size: 12px;
+}
+.prospective-strip strong { color: #e1e7f0; font-weight: 650; }
+.prospective-strip .evidence-boundary { color: #8390a4; }
 .method-button {
   color: #cbd3df;
   border: 1px solid var(--line);
@@ -528,6 +565,7 @@ pre { white-space: pre-wrap; overflow: auto; color: #d1d9e6; }
 @media (max-width: 620px) {
   .topbar { align-items: flex-start; flex-wrap: wrap; padding: 12px 16px; }
   .freshness { order: 3; flex-basis: 100%; }
+  .prospective-strip { justify-content: flex-start; flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; }
   main { padding: 14px 12px 36px; }
   .verdict { text-align: left; }
   .main-gauge-wrap { margin-top: 8px; }
@@ -898,6 +936,12 @@ def _snapshot_product_status(snapshot: dict[str, Any]) -> str:
         )
         if publication.get("model_status") != expected:
             return "DEGRADED"
+    prospective = snapshot.get("_runtime_prospective_evidence")
+    if isinstance(prospective, dict) and (
+        int(prospective.get("gap_count", 0)) > 0
+        or int(prospective.get("evidence_error_count", 0)) > 0
+    ):
+        return "DEGRADED"
     return "READY"
 
 
@@ -1152,6 +1196,17 @@ def render_dashboard(
     data_status = str(snapshot.get("data_status", "UNKNOWN"))
     data_status_label = DATA_STATUS_LABELS.get(data_status, data_status)
     product_status = _snapshot_product_status(snapshot)
+    raw_prospective = snapshot.get("_runtime_prospective_evidence")
+    prospective = raw_prospective if isinstance(raw_prospective, dict) else {}
+    prospective_capture_status = str(
+        prospective.get("latest_capture_status", "PRE_ACTIVATION")
+    )
+    prospective_cohort = str(
+        prospective.get("scientific_cohort_id", "MATVIX_V3_0_1_CORE")
+    )
+    prospective_pending = str(prospective.get("pending_outcome_count", 0))
+    prospective_resolved = str(prospective.get("resolved_outcome_count", 0))
+    prospective_gaps = str(prospective.get("gap_count", 0))
     decision_label = _decision_label(snapshot.get("decision_as_of"))
     baseline = story.get("baseline_score")
     carry_risk = _numeric(scores.get("carry_risk"))
@@ -1385,6 +1440,14 @@ def render_dashboard(
   <div class="product-readiness" id="product-status" data-status="{product_status}">V3 · {product_status} · 只读研究</div>
   <button class="method-button" type="button" data-open-panel="quant-panel" aria-controls="quant-panel" aria-expanded="false">方法与口径</button>
 </header>
+<section class="prospective-strip" id="prospective-evidence" aria-label="Prospective 001 本地证据状态">
+  <span>Prospective 001 · 捕获 <strong id="prospective-capture-status">{html.escape(prospective_capture_status)}</strong></span>
+  <span>Cohort <strong id="prospective-cohort">{html.escape(prospective_cohort)}</strong></span>
+  <span>待解析 <strong id="prospective-pending">{html.escape(prospective_pending)}</strong></span>
+  <span>已解析 <strong id="prospective-resolved">{html.escape(prospective_resolved)}</strong></span>
+  <span>Gap <strong id="prospective-gaps">{html.escape(prospective_gaps)}</strong></span>
+  <span class="evidence-boundary">只读研究 · 不授予交易权限</span>
+</section>
 <main>
   <section class="weather-hero" aria-labelledby="market-verdict">
     <h1 class="verdict" id="market-verdict">市场状态：<strong>{html.escape(verdict)}</strong></h1>

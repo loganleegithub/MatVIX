@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -299,3 +299,103 @@ def resolve_due_outcomes(
         created_outcomes=created_outcomes,
         existing_outcomes=existing_outcomes,
     )
+
+
+def prospective_runtime_summary(
+    project_dir: str | Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return a read-only Dashboard summary of the local evidence ledger."""
+
+    root = Path(project_dir).resolve()
+    checked_at = now or datetime.now(UTC)
+    if checked_at.tzinfo is None:
+        raise ProspectiveValidationError("summary now must be timezone-aware")
+    receipt_dir = root / "artifacts" / "acceptance"
+    capture_count = 0
+    gap_count = 0
+    preactivation_count = 0
+    latest_session: str | None = None
+    latest_capture_status = "PRE_ACTIVATION"
+    evidence_error_count = 0
+    for receipt_path in sorted(receipt_dir.glob("real_acceptance_*.json")):
+        try:
+            receipt = read_json(receipt_path)
+        except (OSError, ValueError):
+            continue
+        if receipt.get("passed") is not True or not isinstance(
+            receipt.get("session_date"), str
+        ):
+            continue
+        prospective = receipt.get("prospective_evidence")
+        if not isinstance(prospective, Mapping):
+            continue
+        status_value = str(prospective.get("status"))
+        if status_value == "LOCAL_CAPTURED":
+            capture_count += 1
+        elif status_value == "EVIDENCE_CAPTURE_GAP":
+            gap_count += 1
+        elif status_value == "PRE_ACTIVATION":
+            preactivation_count += 1
+        else:
+            evidence_error_count += 1
+            continue
+        session = str(receipt["session_date"])
+        if latest_session is None or session > latest_session:
+            latest_session = session
+            latest_capture_status = status_value
+
+    pending_outcomes = 0
+    due_pending_outcomes = 0
+    resolved_outcomes = 0
+    eligible_events = 0
+    prediction_count = 0
+    try:
+        predictions = _receipt_bound_predictions(root)
+    except ProspectiveEvidenceError:
+        predictions = []
+        evidence_error_count += 1
+    for prediction in predictions:
+        prediction_count += 1
+        events = cast(Mapping[str, Mapping[str, Any]], prediction.record["events"])
+        for event_id in EVENT_ORDER:
+            event = events[event_id]
+            if event["event_status"] != "ELIGIBLE":
+                continue
+            eligible_events += 1
+            path = outcome_record_path(root, prediction.session_date, event_id)
+            if not path.exists():
+                pending_outcomes += 1
+                outcome_at = datetime.fromisoformat(str(event["outcome_available_at"]))
+                if checked_at >= outcome_at:
+                    due_pending_outcomes += 1
+                continue
+            try:
+                outcome, _ = read_outcome_record(root, prediction.session_date, event_id)
+                if outcome["prediction"] != prediction.binding.as_dict():
+                    raise ProspectiveConflictError("outcome prediction binding mismatch")
+            except ProspectiveEvidenceError:
+                evidence_error_count += 1
+                continue
+            resolved_outcomes += 1
+
+    denominator = capture_count + gap_count
+    return {
+        "schema_version": PROSPECTIVE_SCHEMA_VERSION,
+        "scientific_cohort_id": SCIENTIFIC_COHORT_ID,
+        "activation_tag": ACTIVATION_TAG,
+        "confirmation_status": "PROSPECTIVE_CONFIRMATION_PENDING",
+        "latest_capture_status": latest_capture_status,
+        "latest_receipt_session": latest_session,
+        "prediction_count": prediction_count,
+        "capture_count": capture_count,
+        "gap_count": gap_count,
+        "preactivation_receipt_count": preactivation_count,
+        "eligible_event_count": eligible_events,
+        "pending_outcome_count": pending_outcomes,
+        "due_pending_outcome_count": due_pending_outcomes,
+        "resolved_outcome_count": resolved_outcomes,
+        "evidence_error_count": evidence_error_count,
+        "capture_gap_rate": gap_count / denominator if denominator else None,
+    }

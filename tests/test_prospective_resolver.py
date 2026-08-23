@@ -23,7 +23,7 @@ from matvix.prospective import (
     read_outcome_record,
     write_prediction_record,
 )
-from matvix.prospective_resolver import resolve_due_outcomes
+from matvix.prospective_resolver import prospective_runtime_summary, resolve_due_outcomes
 from matvix.storage import write_json, write_parquet
 
 RELEASE_ID = "git:" + "c" * 40
@@ -131,6 +131,13 @@ def test_resolver_waits_until_due_then_appends_exact_outcomes_idempotently(
     assert pending.due_events == 0
     assert pending.pending_events == 3
     assert pending.created_outcomes == 0
+    before_summary = prospective_runtime_summary(tmp_path, now=outcome_at)
+    assert before_summary["latest_capture_status"] == "LOCAL_CAPTURED"
+    assert before_summary["scientific_cohort_id"] == SCIENTIFIC_COHORT_ID
+    assert before_summary["prediction_count"] == 1
+    assert before_summary["pending_outcome_count"] == 3
+    assert before_summary["resolved_outcome_count"] == 0
+    assert before_summary["gap_count"] == 0
 
     resolved = resolve_due_outcomes(
         tmp_path,
@@ -146,6 +153,9 @@ def test_resolver_waits_until_due_then_appends_exact_outcomes_idempotently(
         states.loc[2, "session_date"]
     ).date().isoformat()
     assert acute["resolved_late"] is False
+    after_summary = prospective_runtime_summary(tmp_path, now=outcome_at)
+    assert after_summary["pending_outcome_count"] == 0
+    assert after_summary["resolved_outcome_count"] == 3
 
     repeated = resolve_due_outcomes(
         tmp_path,

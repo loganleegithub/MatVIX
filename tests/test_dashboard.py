@@ -171,6 +171,32 @@ def test_trader_dashboard_exposes_interaction_and_http_polling_hooks() -> None:
     assert "structure-stability-gauge" in dashboard
 
 
+def test_dashboard_displays_prospective_capture_cohort_pending_resolved_and_gaps() -> None:
+    snapshot = deepcopy(_snapshot())
+    snapshot["_runtime_prospective_evidence"] = {
+        "latest_capture_status": "LOCAL_CAPTURED",
+        "scientific_cohort_id": "MATVIX_V3_0_1_CORE",
+        "pending_outcome_count": 7,
+        "resolved_outcome_count": 3,
+        "gap_count": 0,
+        "evidence_error_count": 0,
+    }
+
+    dashboard = render_dashboard(snapshot)
+
+    assert 'id="prospective-evidence"' in dashboard
+    assert 'id="prospective-capture-status">LOCAL_CAPTURED<' in dashboard
+    assert 'id="prospective-cohort">MATVIX_V3_0_1_CORE<' in dashboard
+    assert 'id="prospective-pending">7<' in dashboard
+    assert 'id="prospective-resolved">3<' in dashboard
+    assert 'id="prospective-gaps">0<' in dashboard
+    assert "只读研究 · 不授予交易权限" in dashboard
+
+    snapshot["_runtime_prospective_evidence"]["gap_count"] = 1
+    degraded = render_dashboard(snapshot)
+    assert 'id="product-status" data-status="DEGRADED"' in degraded
+
+
 def test_triad_driver_labels_do_not_borrow_evidence_from_other_axes() -> None:
     snapshot = deepcopy(_snapshot())
     snapshot["market_story"]["drivers"] = [

@@ -530,6 +530,41 @@ def test_conditional_model_fallback_marks_product_degraded_without_trade_authori
     assert status["trading_authorized"] is False
 
 
+def test_prospective_capture_gap_is_visible_and_degrades_without_trade_authority(
+    tmp_path: Path,
+) -> None:
+    session = "2026-08-18"
+    _publish(tmp_path, session)
+    receipt_path = (
+        tmp_path / "artifacts" / "acceptance" / f"real_acceptance_{session}.json"
+    )
+    receipt = read_json(receipt_path)
+    receipt["prospective_evidence"] = {
+        "schema_version": "1.0.0",
+        "status": "EVIDENCE_CAPTURE_GAP",
+        "scientific_cohort_id": "MATVIX_V3_0_1_CORE",
+        "activation_tag": "matvix-prospective-001-activation",
+        "activation_commit": "b" * 40,
+        "runtime_release_id": "git:" + "c" * 40,
+        "captured_at": "2026-08-19T13:20:00+00:00",
+        "prediction": None,
+        "capture_error": "OSError",
+    }
+    write_json(receipt, receipt_path)
+
+    with DashboardHTTPRuntime(tmp_path, port=0, renderer=_renderer) as runtime:
+        status = _json_request(runtime, "/api/status")
+
+    assert status["product_status"] == "DEGRADED"
+    assert status["product_status_reasons"] == ["EVIDENCE_CAPTURE_GAP"]
+    assert status["trading_authorized"] is False
+    prospective = status["prospective_evidence"]
+    assert prospective["latest_capture_status"] == "EVIDENCE_CAPTURE_GAP"
+    assert prospective["scientific_cohort_id"] == "MATVIX_V3_0_1_CORE"
+    assert prospective["gap_count"] == 1
+    assert prospective["pending_outcome_count"] == 0
+
+
 def test_head_returns_headers_without_body(tmp_path: Path) -> None:
     _publish(tmp_path, "2026-08-18")
     with DashboardHTTPRuntime(tmp_path, port=0, renderer=_renderer) as runtime:
