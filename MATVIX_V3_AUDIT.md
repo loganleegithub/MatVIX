@@ -9,8 +9,8 @@
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
 > v1.3 修订提交：本次纯文档冻结提交（以 Git 历史为准）
-> 当前裁决：`STAGE_D=SEVEN_DIMENSION_PASS / FOUR_MODEL_STATION_READY_FOR_STAGE_E_FREEZE`
-> 下一项：`STAGE_E PURE-DOCUMENT UNQUALIFIED VETO SHADOW FREEZE`
+> 当前裁决：`STAGE_E=PURE_DOCUMENT_ADAPTER_SPEC_FROZEN / PRICE_BLIND_IMPLEMENTATION_AUTHORIZED`
+> 下一项：`ADAPTER-002 IMPLEMENT FROZEN UNQUALIFIED VETO SHADOW`
 > 最高允许结论：`HISTORICAL_RESEARCH_SUPPORT / RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION`
 
 ---
@@ -464,7 +464,7 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - station acceptance criterion：合同第 6.5 节四模型、Broad reference 与 Fragility boundary 全部满足，
   且站内验收提交后工作树干净。
 - economic relevance：阶段 F 只可运行一次；成功最多 `HISTORICAL_RESEARCH_SUPPORT`，失败即拒绝。
-- status：`STAGE_D_PASS / STAGE_E_PURE_DOCUMENT_FREEZE_NEXT`
+- status：`STAGE_E_SPEC_FROZEN / PRICE_BLIND_IMPLEMENTATION_AUTHORIZED`
 
 ### 9.8 `PROB-CARRY-SATURATION-003`
 
@@ -1393,6 +1393,186 @@ PRODUCT_PRICES_READ=FALSE
 ADAPTER_CODE=NOT_STARTED
 ECONOMIC_PROBE=NOT_RUN
 NEXT=STAGE_E_PURE_DOCUMENT_FREEZE
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+---
+
+## 15. 阶段 E：`UNQUALIFIED_FRAGILITY_VETO_SHADOW` 价格盲冻结
+
+阶段 D 已通过且其提交后工作树干净。本节只冻结 adapter/policy 研究对象；编写本节时仍未读取
+`SVXY / SGOV / VXZ` 价格、`data/raw/economic_probe` 或 `outputs/v2_economic_probe` 的逐日或报告内容。
+正式气象站继续只有 acute/front/mid/carry 四个条件模型与 Broad 基准率参考；本节不重开
+`PROB-FRAGILITY-002`，也不改变其 114/252 `NOT_ELIGIBLE` 裁决。
+
+### 15.1 唯一候选复现合同
+
+唯一允许复现的是第 11.1、12.5 节已经执行并失败的 `calm_carry_breaks_5d` 候选。其构造逐字固定为：
+
+```text
+eligibility =
+    data_status == OK
+    AND formal_vintage_eligible == true
+    AND carry_answer == SUPPORTIVE
+    AND shock_answer == CALM
+    AND persistence_answer == NORMAL
+    AND all predictors observable at t
+
+horizon = next 5 formal sessions
+positive =
+    any hard_acute == true
+    OR any front_slope30 < 0
+    OR any broad_pressure_day == true
+    OR carry_environment_state == CLOSED on two consecutive future sessions
+outcome_available_at = after all four facts for the fifth future formal session are known
+
+predictor order =
+    p_neg_front_slope30
+    p_d1_log_vvix
+    p_d5_log_vvix
+    p_neg_spx_5d_log_momentum
+
+percentile = prior 756 / minimum 504 / exclude current / methodology isolation
+base rate = prior max 756 / minimum 252 / Beta(1, 1)
+raw learner = scikit-learn 1.7.2 LogisticRegression
+              C=1 / lbfgs / fit_intercept=true / tol=1e-8 / max_iter=1500 /
+              random_state=0 / max training=1500 / min training=252 /
+              min classes=30/30 / purge=20 formal sessions
+rolling intercept = prior max 252 / min classes=20/20 / slope=1 /
+                    root=[-40, 40] / clip=[1e-6, 0.999999]
+```
+
+唯一冻结候选的完整正式 OOF hash 继续为：
+
+```text
+44e7e43efb207b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770
+```
+
+候选当时有 371 个完成 label（158/213）、115 个因果 score rows；其中 114 个 label 已完成
+（44/70），首个 score session 为 2023-06-16。adapter 可在 signal t 使用当时已存在且有限的
+`published_probability` 与 `base_rate_at_prediction`；不能要求 t 时尚未知的未来 label 已完成。
+`published_probability` 在 adapter 中必须改名为 `shadow_score`，其 transform 只能按原行保留
+`IDENTITY_WARMUP` 或 `ROLLING_INTERCEPT_252` provenance，不能据此声称正式校准通过。
+
+本节的完整 canonical adapter spec 使用 sorted-key、UTF-8、compact JSON 序列化；实现必须内置同一
+对象并逐字断言：
+
+```text
+adapter_spec_id = MATVIX_V3_UNQUALIFIED_FRAGILITY_VETO_SHADOW_1.0.0
+canonical_sha256 = 891ff32abe61235f7297684ae7bc4576f470312950782773761aa25da4ca8aa8
+```
+
+### 15.2 账本与唯一映射
+
+adapter ledger 至少逐日保留：
+
+```text
+session_date
+base_short_allowed
+shadow_score
+causal_base_rate
+shadow_score_available
+shadow_score_kind = UNQUALIFIED_RESEARCH_SCORE
+qualification_status = INSUFFICIENT_PUBLISHED_OOF
+formal_event_id = null
+formal_model_status = null
+shadow_transform
+unqualified_fragility_veto_shadow
+short_allowed_v3
+```
+
+唯一允许的布尔语义为：
+
+```text
+BASE_SHORT_ALLOWED =
+    data_status == OK
+    AND carry == SUPPORTIVE
+    AND shock == CALM
+    AND persistence == NORMAL
+
+SHADOW_SCORE_AVAILABLE =
+    a causally published candidate row exists at t
+    AND shadow_score is finite
+    AND causal_base_rate is finite
+
+UNQUALIFIED_FRAGILITY_VETO_SHADOW =
+    BASE_SHORT_ALLOWED
+    AND SHADOW_SCORE_AVAILABLE
+    AND shadow_score > causal_base_rate
+
+SHORT_ALLOWED_V3 =
+    BASE_SHORT_ALLOWED
+    AND SHADOW_SCORE_AVAILABLE
+    AND NOT UNQUALIFIED_FRAGILITY_VETO_SHADOW
+```
+
+当 `BASE_SHORT_ALLOWED=true` 但 score/base rate 不可用时固定为 SGOV。Combined precedence 逐字
+保持为：data 非 OK → SGOV；否则 DIFFUSING → VXZ；否则 `SHORT_ALLOWED_V3` → SVXY；否则 SGOV。
+因此允许的唯一变化是 `SVXY → SGOV`；不得产生 `SGOV/VXZ → SVXY`，不得改变任何 Long signal、
+position、cost 或 P&L。禁止 Tail/THIN/VVIX/VRP 第二硬门、acute 替代、确定性断路器、阈值扫描、
+in-sample score 或缺失值填补。
+
+### 15.3 共同区间、价格批次与唯一运行
+
+价格批次价格盲冻结为 V2 已使用的唯一 manifest：
+
+```text
+data/raw/economic_probe/20260822T093334.462165Z/manifest.json
+```
+
+阶段 F 只能读取该批次；禁止联网、下载、provider fallback、批次替换或补价。主比较 session 是
+冻结 V2 天气、V3 天气与三个 ticker 的共同交集，并限制为 `session_date >= 2023-06-16`；交集内首日
+才是双方共同 signal 起点。更早日期对 V2/V3 一并排除，不能把 shadow warm-up 当成长 SGOV 区间。
+共同起点后 score 缺失仍按第 15.2 节降到 SGOV。
+
+运行前必须核对阶段 D `summary.json` hash：
+
+```text
+54b4c4dd73c4f3f380e90981015b3499bd6a67fe4328c08f44bc97e7e93eba93
+```
+
+阶段 F 只允许运行一次 `run-v3-economic-probe`。命令必须在以下任一输出已存在时拒绝覆盖，且不得
+删除输出后重跑：
+
+```text
+outputs/v3_economic_probe/daily_ledger.csv
+outputs/v3_economic_probe/report.json
+outputs/v3_economic_probe/report.html
+```
+
+### 15.4 价格盲冻结的裁决门
+
+Short V3 必须在完全相同的共同 sessions、价格、成本和执行时点上，同时满足：税费后 final NAV 与
+total return 严格高于 frozen V2，max drawdown 严格更优，worst rolling 20-session return 严格更优。
+Long V3 的 signal、asset、return、cost、NAV 必须与 V2 逐日完全一致。Combined V3 的 final NAV、
+max drawdown 与 worst-20D 必须全部不劣于 V2。逐日账本还必须保留 target asset、adjusted open、
+turnover、cost、gross/net return、P&L、NAV、drawdown，并列出最差 20 个 SVXY 日双方实际暴露。
+
+任一 eligible probe 不满足即：
+
+```text
+ECONOMIC_VERDICT = NO_COMPREHENSIVE_INCREMENT
+ADAPTER-002 = REJECTED_BY_FROZEN_HISTORICAL_PROBE
+```
+
+届时停止，不改 mapping、不换阈值、不运行第二次。全部满足也只能标记
+`HISTORICAL_RESEARCH_SUPPORT`；不能提升 Fragility 资格、增加第五个模型、合并 main、推送或表述为
+production promotion。prospective ledger 只能从 adapter 实现提交后的首个完整共同 session 起追加，
+不得回填冻结提交以前的日期。
+
+阶段 E 冻结裁决：
+
+```text
+STAGE_E=PASS_PURE_DOCUMENT_FREEZE
+ADAPTER_SPEC_ID=MATVIX_V3_UNQUALIFIED_FRAGILITY_VETO_SHADOW_1.0.0
+ADAPTER_SPEC_SHA256=891ff32abe61235f7297684ae7bc4576f470312950782773761aa25da4ca8aa8
+PROB-FRAGILITY-002=FORMAL_REJECT_RETAINED_114_OF_252
+FORMAL_STATION_SURFACE=UNCHANGED_FOUR_MODELS_PLUS_ONE_BASE_RATE_REFERENCE
+PRODUCT_PRICES_READ=FALSE
+ADAPTER_CODE=NEXT_AUTHORIZED
+ECONOMIC_PROBE=NOT_RUN
 NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION
