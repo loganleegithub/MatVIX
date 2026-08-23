@@ -1,17 +1,25 @@
-# MATVIX PROSPECTIVE 001 施工合同（草案）
+# MATVIX PROSPECTIVE 001 施工合同
 
-状态：`READY_FOR_HUMAN_REVIEW / NOT_EXECUTED`
+合同版本：`1.0.0`
+
+状态：`HUMAN_FROZEN / P0_ACCEPTED / P1_P6_AUTHORIZED`
+
+冻结依据：人类于 2026-08-23 明确批准
+`MATVIX_PROSPECTIVE_001_POWER_DESIGN.md` 并授权施工；P0 证据提交为
+`ba1a990a02335396592dc012f6ba285b8be5c6c6`。
 
 本合同只建设 MatVIX V3 的本地 prospective 证据记录。它不修改气象站模型、事件、
 特征、阈值、历史验收、经济探针结论，也不授予交易权限。
 
-在本合同经人类明确冻结前，不得编写运行代码、创建激活标签或产生正式 prospective
-样本。
+本合同已经人类冻结。施工必须依次通过 P1–P5；只有全部通过后才可执行 P6。任一门失败
+必须停止，不得根据测试、prospective outcome 或经济结果修改本合同换取通过。
 
 ## 1. 产品边界
 
-Prospective 001 只回答：MatVIX 在不知道未来结果时，当天实际发布了什么；5/10 个
-交易日后，对应事件是否发生。
+Prospective 001 回答两个预先分离的问题：MatVIX 在不知道未来结果时当天实际发布了什么；
+同一时点已经因果计算、但可能因历史资格门而未对产品发布的条件模型 candidate 是什么。
+5/10 个交易日后，再解析对应事件是否发生。Candidate 只用于 shadow science，不进入
+Dashboard 天气结论、不授予交易权限。
 
 正式记录范围仅包含当前五个 V3 概率事件：
 
@@ -36,9 +44,10 @@ Prospective 001 只回答：MatVIX 在不知道未来结果时，当天实际发
 科学根仍为 `matvix-v3.0.1`，peeled commit 为
 `63ea5900e7eab0b0c91a74e18eea361fdebe6e7d`。
 
-最终合同、实现和验收通过后，另建唯一 Prospective activation tag。首条正式样本是该
-tag 之后发布的第一份 passing receipt。tag 之前的所有 snapshot/receipt 均属于历史，
-不得转写、推算或补录为 prospective prediction。
+最终合同、实现和验收通过后，创建唯一 annotated activation tag
+`matvix-prospective-001-activation`。首条正式样本是该 tag 之后发布的第一份 passing
+receipt。tag 之前的所有 snapshot/receipt 均属于历史，不得转写、推算或补录为
+prospective prediction。
 
 若合同讨论或施工期间出现新的正式 receipt，只记录为 `PRE_ACTIVATION`，不得为了制造
 “零缺口”而回填。
@@ -47,24 +56,31 @@ tag 之后发布的第一份 passing receipt。tag 之前的所有 snapshot/rece
 
 本项目不建设数据库、全局 hash chain、WORM 存储、签名密钥或外部服务。
 
-本地权威由两类独立 JSON 文件构成：
+本地权威由两类 Schema `1.0.0` 的独立 JSON 文件构成，科学 cohort id 固定为
+`MATVIX_V3_0_1_CORE`：
 
 1. `PREDICTION_PUBLISHED`
+   - 路径固定为 `data/prospective/core/predictions/YYYY-MM-DD.json`；
    - 每个 accepted session 一个文件；
    - 保存 session、`decision_as_of`、本地发布时间、snapshot SHA-256、事件状态、模型
-     状态、概率、causal BaseRate、有效期和科学版本；
+     状态、`published_probability`、nullable `candidate_probability`、causal BaseRate、
+     有效期、scientific cohort id 和运行 release id；
+   - `candidate_probability` 只能来自当天已经因果计算的 rolling-intercept candidate；
+     模型未成功计算时必须为 null，禁止事后重算补入；
    - receipt 保存该 prediction 文件的相对路径、SHA-256 和字节数。
 2. `OUTCOME_RESOLVED`
+   - 路径固定为 `data/prospective/core/outcomes/YYYY-MM-DD/EVENT_ID.json`；
    - 每个需要解析的 event 一个新文件；
    - 引用原 prediction SHA-256；
    - 保存固定 horizon、`valid_through_session`、`outcome_available_at`、标签、实际解析
-     时间和 target-ledger digest；
+     时间、nullable `first_event_session` 和 target-ledger digest；
+   - `first_event_session` 只允许用冻结目标谓词在完整 horizon 到期后解析，不得改变标签；
    - 不修改 prediction 文件。
 
 文件写入规则：
 
 - 只允许 exclusive create；
-- 完整写入后刷新到磁盘并设为只读；
+- 完整写入后对文件和父目录刷新到磁盘，并将文件设为 `0444` 只读；
 - 相同内容重跑为幂等；
 - 同一逻辑路径出现不同内容时停止覆盖并报告冲突；
 - CSV、mtime 和 Dashboard 页面均不是证据权威。
@@ -81,13 +97,17 @@ Prediction 记录不复制受限原始行情，也不包含 SVXY/SGOV/VXZ、经�
 4. receipt 绑定 snapshot 与 prediction 的 SHA-256，并最后发布；
 5. Dashboard 只读取 passing receipt 所绑定的两份内容。
 
+Activation tag 不存在时不得创建 prediction 文件；passing receipt 只记录
+`PRE_ACTIVATION`，且 prediction binding 为 null。Activation 后 prediction 写入成功才记录
+`LOCAL_CAPTURED`；写入失败则记录 `EVIDENCE_CAPTURE_GAP`。
+
 Receipt 中 prospective 状态仅有：
 
 - `LOCAL_CAPTURED`
 - `EVIDENCE_CAPTURE_GAP`
 - `PRE_ACTIVATION`
 
-本地 prediction 写入失败时，当前天气事实仍可发布，但 receipt 必须写
+Activation 后本地 prediction 写入失败时，当前天气事实仍可发布，但 receipt 必须写
 `EVIDENCE_CAPTURE_GAP`，Dashboard 总体显示 `DEGRADED`，且该 session 永远不得补写
 prediction。
 
@@ -109,6 +129,10 @@ last-good。
 - target ledger 中 event、prediction session、horizon、valid-through 完全一致；
 - label 为完整可观察的 `OBSERVED_0` 或 `OBSERVED_1`。
 
+`first_event_session` 是 prediction session 之后、valid-through 之内第一个满足冻结事件
+predicate 的 XNYS session；`OBSERVED_0` 时必须为 null。Broad 的首次命中定义为其 10 日
+窗口中第 5 个 broad-pressure session。解析逻辑不得读取经济探针或产品价格。
+
 断源时 outcome 保持 pending。数据恢复后，允许对已有 prediction 延迟解析，但必须保留
 计划时间、实际时间和 `resolved_late=true`；不得使用原 valid-through 之后的信息重定义
 标签。
@@ -127,33 +151,71 @@ cohort 变化。任何科学生成规则变化必须先开新 cohort；纯 Dashb
 每条 prediction 同时保存 scientific cohort id 与运行 release id，不跨 cohort 合并正式
 统计。
 
-## 7. Power/evidence 合同待冻结项
+## 7. Power/evidence 冻结合同
 
-以下评估方法现在先冻结，不得看到 prospective 结果后更改：
+P0 使用的 OOF、target 和 Stage-D calendar SHA-256 分别为：
 
-- 主指标：相对同日 causal BaseRate 的 paired Brier Skill；
-- 次指标：paired Log Loss、calibration intercept/slope、ECE；
-- 重叠 horizon 不按独立逐日样本处理；使用预定义 episode/block 聚类与 bootstrap；
-- 报告正负 outcome、独立 stress/carry episode、lead time、false-alarm duration、模型
-  coverage 与 capture-gap rate；
-- Broad 只作为 BaseRate reference，不计算相对自身的 Skill；
-- 只在固定半年度审查日正式查看统计结果，日常只监控写入完整性。
+- `330476772918f52d1d588577ea337bd7b6ed596a3049294716e3c14dfa34f820`
+- `fb91968643c2b65fa28f72fa77ca485cb4db934c1e59d20fb554cf2d00939913`
+- `24de7e129cf2349bc18bc3aef697986af4c77184ea017c7dc2ad9423b049a7ef`
 
-最终最小日历跨度、正负类别数、独立 episode/block 数、置信区间算法和
-`CONFIRMED / CONTRADICTED / INCONCLUSIVE` 门槛尚未冻结。施工前必须先用冻结前历史
-ledger 做一次只读 power 设计；它只决定前向证据需求，禁止改变模型或根据经济收益选择
-门槛。Power 结果须由人类写入本合同并再次明确批准。
+P0 已证明：若真实 Skill 仅为 2%，四个条件事件达到单侧 alpha=5%、power=80% 的
+20-session block 渐近时间约为 100、259、166、671 年。因此下列数字只是一次正式裁决的
+最低完整性门，不得表述为充分 power：
 
-在该节所有数字仍缺失时：
+- activation 后日历跨度 >=36 个月；
+- 已解析 candidate predictions >=504；
+- 正 outcome >=50；负 outcome >=50；
+- 独立正 episode >=20；负 horizon block >=30。
 
-- 可以讨论 Schema 与测试方案；
-- 不得施工运行 writer；
-- 不得创建 activation tag；
-- 不得产生可计入正式验收的 prospective 样本。
+正 episode 固定定义为：相邻正标签 origin 间隔不超过该事件 horizon 个 XNYS session 时
+属于同一 episode；连续 horizon 个 session 没有正标签才关闭。负 horizon block 从
+activation session 锚定为不重叠 5/10-session block；至少含一条已解析 eligible prediction
+且无正标签才计数。缺失和 gap 不制造正负证据。
 
-## 8. 计划施工阶段（尚未授权）
+Core model 正式 estimand 为 `candidate_probability` 相对同日 causal BaseRate 的 paired
+Brier Skill。Publication-policy estimand 使用所有实际 `published_probability`，只作产品
+诊断并报告 `CALIBRATED_MODEL` coverage；不得用 fallback 的零差异替代模型通过。Broad
+只报告 `BASE_RATE_REFERENCE_VALID/INVALID`，不计算 Skill。
 
-1. `P0 POWER DESIGN`：只读历史 power/cluster 可行性报告，人类冻结第 7 节数字。
+逐条损失改善固定为：
+
+`d_t = (y_t - base_t)^2 - (y_t - candidate_t)^2`
+
+Skill 固定为 `sum(d_t) / sum((y_t - base_t)^2)`。主置信区间使用从 activation calendar
+锚定的非重叠 20-XNYS-session block，固定 seed `20260823` 重采样 10,000 次；10/40-session
+结果仅作敏感性报告，不能择优替代主结果。Paired Log Loss 使用 `[1e-6, 1-1e-6]` clipping。
+ECE 使用 5 个等频 bin，按 probability、prediction session、prediction record hash 稳定
+排序，bin 大小最多相差 1。Calibration intercept/slope、lead time、false-alarm duration、
+正负 outcome、episode/block、coverage 与 capture-gap rate 全部报告。
+
+缺失 `candidate_probability` 不假设为随机缺失。Outcome 已知后，每个缺失 candidate 的
+Brier loss 只约束在 `[0,1]`：确认采用全部缺失的最不利界，否定采用最有利界，其余为
+`INCONCLUSIVE`。Gap 永不回填。
+
+False-alarm duration 固定为 `candidate_probability > causal_base_rate` 且最终 label=0 的
+连续 eligible origin session 数；禁止扫描概率阈值。Lead time 使用冻结的
+`first_event_session`。
+
+单事件裁决固定为：
+
+- `CONFIRMED`：完整性门全部满足；candidate Brier Skill 点估计 >=2%；包含 gap 最不利界
+  的单侧 95% lower >0；prospective ECE 点估计 <=7%；
+- `CONTRADICTED`：完整性门全部满足，且包含 gap 最有利界的 paired Skill 单侧 95% upper
+  <0；或 ECE 的 cluster-bootstrap 单侧 95% lower >7%；
+- `INCONCLUSIVE`：其他全部情况。
+
+每半年只检查 ledger 完整性与积累进度。某事件首次满足全部完整性门后，只在下一个预定
+6 月 30 日或 12 月 31 日对该 scientific cohort 做一次正式裁决；同一 cohort 不得重复使用
+相同 outcome 取得绿灯。后续正式再检验必须预先冻结新的非重叠 confirmatory cohort。
+
+四个条件事件全部 `CONFIRMED` 才可称 `PROSPECTIVE_CORE_CONFIRMED`；任何
+`CONTRADICTED` 必须暴露；其余保持 `PROSPECTIVE_CONFIRMATION_PENDING`。任何统计结果都
+不授予交易权限。
+
+## 8. 已授权施工阶段
+
+1. `P0 POWER DESIGN`：`COMPLETE / HUMAN_ACCEPTED`。
 2. `P1 LOCAL RECORD`：Prediction/Outcome Schema 与只读 exclusive writer。
 3. `P2 RECEIPT BINDING`：receipt-last、幂等和同 session 冲突保护。
 4. `P3 RESOLVER`：5/10-session outcome 自动解析与 pending/late 语义。
@@ -179,4 +241,5 @@ ledger 做一次只读 power 设计；它只决定前向证据需求，禁止改
 - V3 正式概率、历史 Stage D 和经济探针证据保持不变；
 - 仍为 `READ_ONLY / NO_TRADING_AUTHORITY / PROSPECTIVE_CONFIRMATION_PENDING`。
 
-本合同当前只供人类审查，不是施工授权。
+本合同已经人类冻结并授权 P1–P6。P6 仍必须等待 P1–P5 全部门通过；activation 后仍为
+`READ_ONLY / NO_TRADING_AUTHORITY / PROSPECTIVE_CONFIRMATION_PENDING`。
