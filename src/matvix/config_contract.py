@@ -39,7 +39,7 @@ _FROZEN = {
     "state_v2.yaml": (
         "version",
         "3.0.0",
-        "bbe935e2b96fda7bc379e76592807a19d6ed57f820896c1a37281735c11c8482",
+        "7464b0ed3ef6cb37b96bfd34398fa1d53c44290b9caaa7e739167ce25ed0120d",
     ),
     "probability_v2.yaml": (
         "version",
@@ -218,7 +218,12 @@ def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
         AXIS_COMPONENTS,
         add_percentiles_and_scores,
     )
-    from matvix.state.transitions import ACUTE_RELEASE_SESSIONS, ACUTE_RELEASE_SHOCK_MAX
+    from matvix.state.transitions import (
+        ACUTE_RELEASE_SESSIONS,
+        ACUTE_RELEASE_SHOCK_MAX,
+        RISK_ON_CONFIRMATION_SESSIONS,
+        RISK_ON_CONFIRMATION_TRANSITIONS,
+    )
 
     _same(errors, "state.version", STATE_VERSION, config["version"])
     for axis, keys in _WEIGHT_KEYS.items():
@@ -250,9 +255,19 @@ def _state_contract(config: dict[str, Any], errors: list[str]) -> None:
         "repair_building": REPAIR_BUILDING_SCORE,
         "acute_release_shock_max": ACUTE_RELEASE_SHOCK_MAX,
         "acute_release_sessions": ACUTE_RELEASE_SESSIONS,
+        "risk_on_confirmation_sessions": RISK_ON_CONFIRMATION_SESSIONS,
     }
     for name, runtime_value in bindings.items():
         _same(errors, f"state.thresholds.{name}", runtime_value, t[name])
+    configured_transitions = {
+        tuple(item) for item in config["phase_publication"]["risk_on_confirmation_transitions"]
+    }
+    _same(
+        errors,
+        "state.phase_publication.risk_on_confirmation_transitions",
+        RISK_ON_CONFIRMATION_TRANSITIONS,
+        configured_transitions,
+    )
 
 
 def _probability_contract(config: dict[str, Any], errors: list[str]) -> None:

@@ -24,7 +24,7 @@ from matvix.probability.engine import outlook_answer, probability_for_event
 from matvix.probability.targets import add_carry_duration_facts, add_event_statuses
 from matvix.probability.walk_forward import ProbabilitySpec, runtime_contract_status
 from matvix.source_identity import OFFICIAL_OBSERVATION_IDENTITIES, VX_SETTLE_IDENTITY
-from matvix.state.transitions import build_state_table
+from matvix.state.transitions import RISK_ON_CONFIRMATION_TRANSITIONS, build_state_table
 from matvix.storage import write_json, write_parquet
 from matvix.v2_audit import (
     _append_invariance,
@@ -1470,7 +1470,25 @@ def _station_state_timing_evidence(
         states.loc[~ok, unknown_columns].eq("UNKNOWN").all(axis=None)
     )
     phase_diff = states["phase"].ne(states["raw_phase"])
-    acute_only_hysteresis = bool(states.loc[phase_diff, "phase"].eq("ACUTE_FRONT_STRESS").all())
+    phase_pairs = pd.Series(
+        list(zip(states["phase"], states["raw_phase"], strict=True)),
+        index=states.index,
+        dtype="object",
+    )
+    acute_hysteresis = phase_diff & states["phase"].eq("ACUTE_FRONT_STRESS")
+    risk_on_confirmation = phase_diff & phase_pairs.isin(RISK_ON_CONFIRMATION_TRANSITIONS)
+    invalid_hysteresis = phase_diff & ~acute_hysteresis & ~risk_on_confirmation
+    phase_hysteresis_allowed = not bool(invalid_hysteresis.any())
+    risk_on_confirmation_rows = [
+        {
+            "session_date": _date(row["session_date"]),
+            "published_source": str(row["phase"]),
+            "raw_destination": str(row["raw_phase"]),
+        }
+        for _, row in states.loc[
+            risk_on_confirmation, ["session_date", "phase", "raw_phase"]
+        ].iterrows()
+    ]
     repair_without_carry = int(
         (states["repair_answer"].eq("CONFIRMED") & ~states["carry_answer"].eq("SUPPORTIVE")).sum()
     )
@@ -1591,7 +1609,7 @@ def _station_state_timing_evidence(
         and replay_rows.all()
         and ok_complete
         and unknown_propagation
-        and acute_only_hysteresis
+        and phase_hysteresis_allowed
         and repair_without_carry > 0
         and carry_without_repair > 0
     )
@@ -1603,7 +1621,11 @@ def _station_state_timing_evidence(
             "ok_rows_complete": ok_complete,
             "unknown_propagation": unknown_propagation,
             "phase_raw_differences": int(phase_diff.sum()),
-            "only_acute_release_hysteresis": acute_only_hysteresis,
+            "phase_hysteresis_allowed": phase_hysteresis_allowed,
+            "acute_release_hysteresis_rows": int(acute_hysteresis.sum()),
+            "risk_on_confirmation_rows": risk_on_confirmation_rows,
+            "risk_on_confirmation_count": int(risk_on_confirmation.sum()),
+            "invalid_or_risk_off_delayed_rows": int(invalid_hysteresis.sum()),
             "repair_confirmed_without_carry_supportive": repair_without_carry,
             "carry_supportive_without_repair_confirmed": carry_without_repair,
         },
@@ -1939,7 +1961,10 @@ def _station_report_markdown(summary: dict[str, Any]) -> str:
             f"追加不变共同 OOF={data['future_append_invariance']['common_oof_rows']}。",
             *stage_lines,
             f"- STATE：逐行确定重放差异={state['replay_mismatched_rows']}；"
-            f"phase/raw_phase 差异={state['phase_raw_differences']}，全部只来自冻结 acute release。",
+            f"phase/raw_phase 差异={state['phase_raw_differences']}，其中 acute release="
+            f"{state['acute_release_hysteresis_rows']}、冻结 risk-on 确认="
+            f"{state['risk_on_confirmation_count']}、非法或 risk-off 延迟="
+            f"{state['invalid_or_risk_off_delayed_rows']}。",
             f"- TIMING：Repair 过早释放={repair['premature_clusters']}/{repair['signal_clusters']}；"
             f"carry 恢复后稳定接口继续关闭中位/最大={recovery['median_sessions_closed']}/"
             f"{recovery['max_sessions_closed']} session；phase 转换 V1/V2={churn['v1']}/{churn['v2']}，"

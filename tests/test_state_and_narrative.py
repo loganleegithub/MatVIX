@@ -16,7 +16,10 @@ from matvix.narrative.templates import basis30_market_story
 from matvix.output import build_daily_output
 from matvix.state.ontology import add_state_predicates_and_answers, at_least_k_true, tri_and, tri_or
 from matvix.state.scores import PERCENTILE_INPUTS, add_percentiles_and_scores
-from matvix.state.transitions import apply_phase_hysteresis
+from matvix.state.transitions import (
+    RISK_ON_CONFIRMATION_TRANSITIONS,
+    apply_phase_hysteresis,
+)
 
 
 def test_three_valued_logic() -> None:
@@ -123,6 +126,99 @@ def test_nonacute_phase_changes_publish_immediately_without_candidate_fields() -
         "MIXED_TRANSITION",
     ]
     assert "candidate_phase" not in out and "candidate_streak" not in out
+
+
+def test_only_frozen_risk_on_transitions_require_three_ok_sessions() -> None:
+    for source, destination in RISK_ON_CONFIRMATION_TRANSITIONS:
+        frame = pd.DataFrame(
+            {
+                "session_date": pd.date_range("2026-08-17", periods=4, freq="B"),
+                "data_status": ["OK"] * 4,
+                "raw_phase": [source, destination, destination, destination],
+                "hard_acute": [False] * 4,
+                "shock_score": [20.0] * 4,
+            }
+        )
+
+        out = apply_phase_hysteresis(frame)
+
+        assert out["phase"].tolist() == [source, source, source, destination]
+        assert out["raw_phase"].tolist() == frame["raw_phase"].tolist()
+        assert "candidate_phase" not in out and "candidate_streak" not in out
+
+
+def test_risk_on_candidate_change_restarts_confirmation() -> None:
+    frame = pd.DataFrame(
+        {
+            "raw_phase": [
+                "MIXED_TRANSITION",
+                "TAIL_RICH_QUIET_CURVE",
+                "CARRY_SUPPORTIVE_LOW_STRESS",
+                "CARRY_SUPPORTIVE_LOW_STRESS",
+                "CARRY_SUPPORTIVE_LOW_STRESS",
+            ],
+            "hard_acute": [False] * 5,
+            "shock_score": [20.0] * 5,
+        }
+    )
+
+    out = apply_phase_hysteresis(frame)
+
+    assert out["phase"].tolist() == [
+        "MIXED_TRANSITION",
+        "MIXED_TRANSITION",
+        "MIXED_TRANSITION",
+        "MIXED_TRANSITION",
+        "CARRY_SUPPORTIVE_LOW_STRESS",
+    ]
+
+
+def test_formal_session_gap_clears_risk_on_confirmation() -> None:
+    frame = pd.DataFrame(
+        {
+            "session_date": pd.to_datetime(
+                ["2026-08-17", "2026-08-18", "2026-08-20", "2026-08-21", "2026-08-24"]
+            ),
+            "data_status": ["OK"] * 5,
+            "raw_phase": ["MIXED_TRANSITION"] + ["CARRY_SUPPORTIVE_LOW_STRESS"] * 4,
+            "hard_acute": [False] * 5,
+            "shock_score": [20.0] * 5,
+        }
+    )
+
+    out = apply_phase_hysteresis(frame)
+
+    assert out["phase"].tolist() == [
+        "MIXED_TRANSITION",
+        "MIXED_TRANSITION",
+        "MIXED_TRANSITION",
+        "MIXED_TRANSITION",
+        "CARRY_SUPPORTIVE_LOW_STRESS",
+    ]
+
+
+def test_risk_off_change_publishes_immediately_and_clears_pending() -> None:
+    frame = pd.DataFrame(
+        {
+            "raw_phase": [
+                "MIXED_TRANSITION",
+                "CARRY_SUPPORTIVE_LOW_STRESS",
+                "FRONT_LOCALIZED_STRESS",
+                "CARRY_SUPPORTIVE_LOW_STRESS",
+            ],
+            "hard_acute": [False] * 4,
+            "shock_score": [20.0] * 4,
+        }
+    )
+
+    out = apply_phase_hysteresis(frame)
+
+    assert out["phase"].tolist() == [
+        "MIXED_TRANSITION",
+        "MIXED_TRANSITION",
+        "FRONT_LOCALIZED_STRESS",
+        "CARRY_SUPPORTIVE_LOW_STRESS",
+    ]
 
 
 def test_acute_exit_requires_two_consecutive_release_days() -> None:

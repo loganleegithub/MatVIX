@@ -41,4 +41,10 @@ thresholds:
   repair_building: 60.0
   acute_release_shock_max: 75.0
   acute_release_sessions: 2
+  risk_on_confirmation_sessions: 3
   direction_change: 7.5
+phase_publication:
+  risk_on_confirmation_transitions:
+    - [MIXED_TRANSITION, TAIL_RICH_QUIET_CURVE]
+    - [MIXED_TRANSITION, CARRY_SUPPORTIVE_LOW_STRESS]
+    - [TAIL_RICH_QUIET_CURVE, CARRY_SUPPORTIVE_LOW_STRESS]

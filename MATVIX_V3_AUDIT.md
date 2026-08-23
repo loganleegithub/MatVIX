@@ -9,8 +9,8 @@
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
 > v1.3 修订提交：本次纯文档冻结提交（以 Git 历史为准）
-> 当前裁决：`FOUR_MODEL_STATION_SCOPE / FORMAL_FRAGILITY_REJECT_RETAINED`
-> 下一项：`STATE-CHURN-002`
+> 当前裁决：`STATE-CHURN-002=FORMAL_HISTORICAL_REPLAY_PASS / FOUR_MODEL_STATION_SCOPE`
+> 下一项：`STAGE_D FOUR-MODEL WEATHER-STATION ACCEPTANCE`
 > 最高允许结论：`HISTORICAL_RESEARCH_SUPPORT / RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION`
 
 ---
@@ -427,7 +427,7 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - semantic/version impact：phase publication 语义与 state/model/package 升 3.0.0；answer/event 不变。
 - station acceptance criterion：risk-off timing 逐事件不劣于 V2，原始 event label/eligibility 不变。
 - economic relevance：不能把 947 transitions 等同成本；未读取逐日资产切换。
-- status：`AUDIT_CONFIRMED_LIMITED / SPEC_FROZEN / IMPLEMENTATION_AUTHORIZED`
+- status：`IMPLEMENTED / FORMAL_HISTORICAL_REPLAY_PASS / RISK_OFF_DELAY_ZERO`
 
 ### 9.6 `DATA-OPTION-002`
 
@@ -1265,6 +1265,61 @@ STAGE_D=NOT_RUN
 ADAPTER=BLOCKED
 ECONOMIC_PROBE=NOT_RUN
 PRODUCT_PRICES_READ=FALSE
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+### 13.5 `STATE-CHURN-002` 受限 risk-on 正式重放
+
+实现只在 `phase` publication 层加入第 12.7 节冻结的三组方向和三日确认；`raw_phase`、五个 answer、
+结构状态、feature、event/label、probability eligibility/value 均未改。候选改变、UNKNOWN、非连续
+formal session 会清空 pending；任一未列名方向立即发布；既有 acute 两日释放仍优先。
+
+正式价格盲链：
+
+```bash
+.venv/bin/python -m matvix build-history --project-dir .
+.venv/bin/python -m matvix train-probabilities --full-rebuild --project-dir .
+.venv/bin/python -m matvix accept-real --date 2026-08-20 --project-dir .
+```
+
+重建 3,334 行 state，`OK/PARTIAL=2,803/531`。相对冻结 V2 state，逐行核对
+`data_status / structure / five answers / raw_phase / hard_acute / broad / repair / carry facts` 的差异为
+0；只有 270 行 published `phase` 改变：
+
+| held source → raw destination | 受影响行 |
+|---|---:|
+| `MIXED_TRANSITION → CARRY_SUPPORTIVE_LOW_STRESS` | 170 |
+| `MIXED_TRANSITION → TAIL_RICH_QUIET_CURVE` | 92 |
+| `TAIL_RICH_QUIET_CURVE → CARRY_SUPPORTIVE_LOW_STRESS` | 8 |
+
+全历史 `phase != raw_phase` 共 449 行，其中原 acute release 179 行、新 risk-on 确认 270 行、非法或
+risk-off 延迟 0 行。phase transition 从 V2 的 947 降为 706；减少 241 次只是冻结规则的结果，不是
+验收目标，也不等同交易换仓或成本改善。
+
+Churn 前后 target、OOF 与 probability artifact hash 一字不变，证明 phase-only 施工没有渗入正式
+事件或概率：
+
+```text
+states.parquet             8a31d30124b616d073ff780363dbef6705a5aa6a7500e6c0569783e16ad2d7b4
+target_ledger.parquet      fb91968643c2b65fa28f72fa77ca485cb4db934c1e59d20fb554cf2d00939913
+oof_ledger.parquet         330476772918f52d1d588577ea337bd7b6ed596a3049294716e3c14dfa34f820
+artifact_contract.json     533111ad28b43b41fa16c604bb4d6e098e5199805eccf7d09895ada0487c7a93
+real_acceptance.json       8a04f9a4728c3ef291379f8ca4d15d07eee09c6e68298a3816cdc4010f18fe54
+```
+
+14 个 `accept-real` 完整性 gate 全通过，且 `PRODUCT_PRICES_READ=FALSE`。阶段 D 的完整独立维度报告
+仍未运行；本 defect 提交后的入口状态为：
+
+```text
+STATE-CHURN-002=PASS
+RISK_OFF_DELAYED_ROWS=0
+RAW_STATE_EVENT_PROBABILITY_DIFF=0
+PROB-FRAGILITY-002=CLOSED_BY_SCOPE_FORMAL_REJECT_RETAINED
+STAGE_D=NEXT_AUTHORIZED
+ADAPTER=BLOCKED_PENDING_STAGE_D_AND_STAGE_E_DOC_FREEZE
+ECONOMIC_PROBE=NOT_RUN
 NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION
