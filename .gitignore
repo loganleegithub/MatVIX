@@ -15,6 +15,7 @@ data/raw/release_evidence/
 data/raw/*.parquet
 data/processed/
 data/probability/*
+data/prospective/core/**/*.json
 outputs/
 artifacts/
 

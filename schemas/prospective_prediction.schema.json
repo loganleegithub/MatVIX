@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matvix.local/schemas/prospective_prediction.schema.json",
+  "title": "MatVIX Prospective 001 Prediction Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "scientific_cohort_id",
+    "activation_tag",
+    "session_date",
+    "decision_as_of",
+    "captured_at",
+    "runtime_release_id",
+    "snapshot",
+    "events"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "record_type": {"const": "PREDICTION_PUBLISHED"},
+    "scientific_cohort_id": {"const": "MATVIX_V3_0_1_CORE"},
+    "activation_tag": {"const": "matvix-prospective-001-activation"},
+    "session_date": {"type": "string", "format": "date"},
+    "decision_as_of": {"type": "string", "format": "date-time"},
+    "captured_at": {"type": "string", "format": "date-time"},
+    "runtime_release_id": {
+      "type": "string",
+      "pattern": "^git:[0-9a-f]{40}$"
+    },
+    "snapshot": {"$ref": "#/$defs/fileBinding"},
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acute_front_stress_5d",
+        "front_inversion_5d",
+        "mid_curve_pressure_accelerates_5d",
+        "broad_stress_persists_10d",
+        "carry_environment_recovers_10d"
+      ],
+      "properties": {
+        "acute_front_stress_5d": {"$ref": "#/$defs/event"},
+        "front_inversion_5d": {"$ref": "#/$defs/event"},
+        "mid_curve_pressure_accelerates_5d": {"$ref": "#/$defs/event"},
+        "broad_stress_persists_10d": {"$ref": "#/$defs/event"},
+        "carry_environment_recovers_10d": {"$ref": "#/$defs/event"}
+      }
+    }
+  },
+  "$defs": {
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "sha256", "bytes"],
+      "properties": {
+        "relative_path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "probability": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_status",
+        "model_status",
+        "probability_kind",
+        "horizon_sessions",
+        "published_probability",
+        "candidate_probability",
+        "causal_base_rate",
+        "valid_through_session",
+        "outcome_available_at"
+      ],
+      "properties": {
+        "event_id": {
+          "enum": [
+            "acute_front_stress_5d",
+            "front_inversion_5d",
+            "mid_curve_pressure_accelerates_5d",
+            "broad_stress_persists_10d",
+            "carry_environment_recovers_10d"
+          ]
+        },
+        "event_status": {
+          "enum": ["ELIGIBLE", "NOT_APPLICABLE", "UNOBSERVABLE"]
+        },
+        "model_status": {
+          "enum": [
+            "CALIBRATED_MODEL",
+            "IDENTITY_WARMUP",
+            "BASE_RATE_ONLY",
+            "INSUFFICIENT_HISTORY",
+            "NOT_RUN"
+          ]
+        },
+        "probability_kind": {
+          "enum": ["FEATURE_CONDITIONAL", "HISTORICAL_REFERENCE", null]
+        },
+        "horizon_sessions": {"enum": [5, 10]},
+        "published_probability": {"$ref": "#/$defs/probability"},
+        "candidate_probability": {"$ref": "#/$defs/probability"},
+        "causal_base_rate": {"$ref": "#/$defs/probability"},
+        "valid_through_session": {
+          "type": ["string", "null"],
+          "format": "date"
+        },
+        "outcome_available_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

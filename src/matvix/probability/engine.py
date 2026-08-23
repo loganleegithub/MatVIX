@@ -271,7 +271,16 @@ def probability_for_event(
         calibration["raw_probability"].to_numpy(), calibration["label"].to_numpy()
     )
     probability = apply_intercept(raw_probability, intercept)
-    metadata.update({"intercept_b": intercept, "publication_method": "ROLLING_INTERCEPT_252"})
+    metadata.update(
+        {
+            "intercept_b": intercept,
+            "publication_method": "ROLLING_INTERCEPT_252",
+            # Prospective 001 records the causally available shadow candidate
+            # even when the frozen historical publication gate falls back to
+            # BaseRate. This metadata never changes the published snapshot.
+            "candidate_probability": probability,
+        }
+    )
 
     validation = validation_as_of(oof, prediction_date, spec)
     metadata["validation"] = validation
