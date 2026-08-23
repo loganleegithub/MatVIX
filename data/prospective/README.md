@@ -1,4 +1,12 @@
-# MatVIX V3 Fragility prospective shadow ledger
+# MatVIX prospective evidence directories
+
+The proposed V3 Core prospective protocol is currently a non-executed human-review draft in
+`MATVIX_PROSPECTIVE_001_CONTRACT.md`. No runtime writer, Schema, activation tag or formal
+Core prospective sample exists yet. Historical release snapshots must not be backfilled.
+
+The CSV below is a separate rejected-adapter counterfactual ledger.
+
+## Fragility prospective shadow ledger
 
 Status: `ESTABLISHED_EMPTY_APPEND_ONLY / COUNTERFACTUAL_RESEARCH_ONLY`
 
