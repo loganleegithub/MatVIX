@@ -30,7 +30,9 @@ from matvix.daily_update import (
     frame_content_digest,
     import_release_source_generation,
     project_publication_lock,
+    prospective_receipt_evidence,
     read_update_status,
+    receipt_authorizes_snapshot,
     refresh_official_sources,
     run_daily_update,
     with_snapshot_publication_binding,
@@ -500,7 +502,7 @@ def _accept_real_locked(
         states,
         formal_runtime_required=True,
     )
-    snapshot, _, _, _ = build_snapshot_payload(
+    snapshot, metadata, _, _ = build_snapshot_payload(
         states,
         observations,
         vx_contracts,
@@ -547,6 +549,18 @@ def _accept_real_locked(
                 "rebuild/train the snapshot before signing it"
             )
         if report["passed"]:
+            if receipt_authorizes_snapshot(paths, formal_target):
+                for gate in report["gates"]:
+                    typer.echo(f"{'PASS' if gate['passed'] else 'FAIL'} {gate['name']}")
+                typer.echo(f"Already current {formal_target}")
+                return
+            report["prospective_evidence"] = prospective_receipt_evidence(
+                paths,
+                snapshot,
+                metadata,
+                snapshot_path,
+                captured_at=current,
+            )
             report = with_snapshot_publication_binding(report, snapshot_path)
         else:
             # A failed re-audit is evidence, not a publication.  Keep it away

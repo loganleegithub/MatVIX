@@ -6,7 +6,7 @@ import json
 import threading
 import time
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,6 +24,7 @@ from matvix.constants import (
 from matvix.daily_update import frame_content_digest
 from matvix.dashboard import render_dashboard
 from matvix.pipeline import ProjectPaths
+from matvix.prospective import ProspectiveEvidenceError, validate_receipt_evidence
 from matvix.storage import read_json, read_parquet
 
 DashboardRenderer = Callable[[dict[str, Any], pd.DataFrame | None, pd.DataFrame | None], str]
@@ -62,6 +63,7 @@ class AcceptedSnapshot:
     snapshot_size: int
     dashboard_state_history_digest: str | None = None
     dashboard_oof_digest: str | None = None
+    prospective_evidence: dict[str, Any] | None = None
 
     @property
     def dashboard_revision(self) -> str:
@@ -159,6 +161,19 @@ def find_accepted_snapshots(project_dir: str | Path) -> list[AcceptedSnapshot]:
             "snapshot_size": snapshot_size,
         }:
             continue
+        prospective = receipt.get("prospective_evidence")
+        if prospective is not None:
+            if not isinstance(prospective, Mapping):
+                continue
+            try:
+                validate_receipt_evidence(
+                    paths.root,
+                    session,
+                    prospective,
+                    snapshot_binding=publication_binding,
+                )
+            except ProspectiveEvidenceError:
+                continue
         # A receipt from an earlier same-session build cannot authorize a newly
         # replaced snapshot.  The daily publisher writes the receipt last.
         if acceptance_mtime_ns < snapshot_mtime_ns:
@@ -194,6 +209,7 @@ def find_accepted_snapshots(project_dir: str | Path) -> list[AcceptedSnapshot]:
                     else None
                 ),
                 dashboard_oof_digest=(str(oof_digest) if isinstance(oof_digest, str) else None),
+                prospective_evidence=(dict(prospective) if isinstance(prospective, Mapping) else None),
             )
         )
     return accepted

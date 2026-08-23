@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -58,6 +59,19 @@ class ImmutableWriteResult:
     path: Path
     binding: EvidenceBinding
     created: bool
+
+
+@dataclass(frozen=True)
+class ActivationIdentity:
+    activated: bool
+    capture_ready: bool
+    activation_commit: str | None
+    head_commit: str | None
+    reason: str
+
+    @property
+    def runtime_release_id(self) -> str | None:
+        return f"git:{self.head_commit}" if self.head_commit is not None else None
 
 
 def prediction_record_path(project_dir: str | Path, session_date: str) -> Path:
@@ -246,6 +260,16 @@ def _stable_content(path: Path) -> tuple[bytes, os.stat_result]:
     raise ProspectiveCorruptionError(f"evidence file changed while being read: {path}")
 
 
+def _read_json_object(content: bytes, *, path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProspectiveCorruptionError(f"evidence file is invalid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ProspectiveCorruptionError(f"evidence JSON is not an object: {path}")
+    return cast(dict[str, Any], payload)
+
+
 def binding_for_file(project_dir: str | Path, path: str | Path) -> EvidenceBinding:
     root = Path(project_dir).resolve()
     target = Path(path).resolve()
@@ -255,6 +279,177 @@ def binding_for_file(project_dir: str | Path, path: str | Path) -> EvidenceBindi
         sha256=_sha256(content),
         bytes=len(content),
     )
+
+
+def read_prediction_record(
+    project_dir: str | Path, session_date: str
+) -> tuple[dict[str, Any], EvidenceBinding]:
+    root = Path(project_dir).resolve()
+    path = prediction_record_path(root, session_date)
+    content, metadata = _stable_content(path)
+    if stat.S_IMODE(metadata.st_mode) != 0o444:
+        raise ProspectiveCorruptionError(f"prospective evidence is not read-only: {path}")
+    payload = _read_json_object(content, path=path)
+    validate_prediction_record(payload)
+    binding = EvidenceBinding(
+        relative_path=_relative_path(root, path),
+        sha256=_sha256(content),
+        bytes=len(content),
+    )
+    return payload, binding
+
+
+def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def activation_identity(project_dir: str | Path) -> ActivationIdentity:
+    """Resolve the annotated activation tag and the exact running Git release."""
+
+    root = Path(project_dir).resolve()
+    head_result = _run_git(root, "rev-parse", "--verify", "HEAD")
+    head = head_result.stdout.strip() if head_result.returncode == 0 else None
+    if head is not None and (len(head) != 40 or any(char not in "0123456789abcdef" for char in head)):
+        head = None
+
+    ref = f"refs/tags/{ACTIVATION_TAG}"
+    type_result = _run_git(root, "cat-file", "-t", ref)
+    if type_result.returncode != 0:
+        return ActivationIdentity(False, False, None, head, "ACTIVATION_TAG_ABSENT")
+    if type_result.stdout.strip() != "tag":
+        return ActivationIdentity(True, False, None, head, "ACTIVATION_TAG_NOT_ANNOTATED")
+    tag_result = _run_git(root, "rev-parse", "--verify", f"{ref}^{{commit}}")
+    activation_commit = tag_result.stdout.strip() if tag_result.returncode == 0 else None
+    if activation_commit is None or len(activation_commit) != 40:
+        return ActivationIdentity(True, False, None, head, "ACTIVATION_TAG_UNPEELABLE")
+    if head is None:
+        return ActivationIdentity(True, False, activation_commit, None, "HEAD_UNAVAILABLE")
+    ancestor = _run_git(root, "merge-base", "--is-ancestor", activation_commit, head)
+    if ancestor.returncode != 0:
+        return ActivationIdentity(
+            True,
+            False,
+            activation_commit,
+            head,
+            "RUNTIME_NOT_DESCENDED_FROM_ACTIVATION",
+        )
+    dirty = _run_git(root, "status", "--porcelain", "--untracked-files=no")
+    if dirty.returncode != 0:
+        return ActivationIdentity(True, False, activation_commit, head, "WORKTREE_STATUS_FAILED")
+    if dirty.stdout.strip():
+        return ActivationIdentity(True, False, activation_commit, head, "TRACKED_WORKTREE_DIRTY")
+    return ActivationIdentity(True, True, activation_commit, head, "ACTIVE_CLEAN_RELEASE")
+
+
+def capture_prediction_record(
+    *,
+    project_dir: str | Path,
+    snapshot: Mapping[str, Any],
+    probability_metadata: Mapping[str, Any],
+    snapshot_path: str | Path,
+    captured_at: datetime,
+    runtime_release_id: str,
+) -> ImmutableWriteResult:
+    """Create or idempotently recover one exact prediction before its receipt."""
+
+    root = Path(project_dir).resolve()
+    session = _normalized_date(snapshot.get("session_date"), field="session_date")
+    evidence_path = prediction_record_path(root, session)
+    stable_captured_at = captured_at
+    if evidence_path.exists():
+        existing, _ = read_prediction_record(root, session)
+        try:
+            stable_captured_at = datetime.fromisoformat(str(existing["captured_at"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProspectiveCorruptionError(
+                f"existing prediction captured_at is invalid: {evidence_path}"
+            ) from exc
+    record = build_prediction_record(
+        snapshot=snapshot,
+        probability_metadata=probability_metadata,
+        snapshot_binding=binding_for_file(root, snapshot_path).as_dict(),
+        captured_at=stable_captured_at,
+        runtime_release_id=runtime_release_id,
+    )
+    return write_prediction_record(root, record)
+
+
+def validate_receipt_evidence(
+    project_dir: str | Path,
+    session_date: str,
+    payload: Mapping[str, Any],
+    *,
+    snapshot_binding: Mapping[str, Any],
+) -> None:
+    """Validate the receipt's prospective state and any bound prediction bytes."""
+
+    expected_keys = {
+        "schema_version",
+        "status",
+        "scientific_cohort_id",
+        "activation_tag",
+        "activation_commit",
+        "runtime_release_id",
+        "captured_at",
+        "prediction",
+        "capture_error",
+    }
+    if set(payload) != expected_keys:
+        raise ProspectiveValidationError("receipt prospective evidence fields do not match contract")
+    if payload["schema_version"] != PROSPECTIVE_SCHEMA_VERSION:
+        raise ProspectiveValidationError("receipt prospective schema version mismatch")
+    if payload["scientific_cohort_id"] != SCIENTIFIC_COHORT_ID:
+        raise ProspectiveValidationError("receipt scientific cohort mismatch")
+    if payload["activation_tag"] != ACTIVATION_TAG:
+        raise ProspectiveValidationError("receipt activation tag mismatch")
+    try:
+        captured_at = datetime.fromisoformat(str(payload["captured_at"]))
+    except (TypeError, ValueError) as exc:
+        raise ProspectiveValidationError("receipt capture timestamp is invalid") from exc
+    if captured_at.tzinfo is None:
+        raise ProspectiveValidationError("receipt capture timestamp must be timezone-aware")
+    status_value = payload["status"]
+    if status_value not in {"LOCAL_CAPTURED", "EVIDENCE_CAPTURE_GAP", "PRE_ACTIVATION"}:
+        raise ProspectiveValidationError("receipt prospective status is invalid")
+    if status_value != "LOCAL_CAPTURED":
+        if payload["prediction"] is not None:
+            raise ProspectiveValidationError("non-captured receipt cannot bind a prediction")
+        if status_value == "PRE_ACTIVATION" and payload["capture_error"] is not None:
+            raise ProspectiveValidationError("pre-activation receipt cannot have a capture error")
+        if status_value == "EVIDENCE_CAPTURE_GAP" and not isinstance(
+            payload["capture_error"], str
+        ):
+            raise ProspectiveValidationError("capture gap must identify an error")
+        return
+    if payload["capture_error"] is not None:
+        raise ProspectiveValidationError("captured receipt cannot have a capture error")
+    if not isinstance(payload["activation_commit"], str) or not isinstance(
+        payload["runtime_release_id"], str
+    ):
+        raise ProspectiveValidationError("captured receipt Git identity is missing")
+    prediction_binding = payload["prediction"]
+    if not isinstance(prediction_binding, Mapping):
+        raise ProspectiveValidationError("captured receipt prediction binding is missing")
+    record, actual_binding = read_prediction_record(project_dir, session_date)
+    if dict(prediction_binding) != actual_binding.as_dict():
+        raise ProspectiveValidationError("receipt prediction binding does not match local bytes")
+    if record["runtime_release_id"] != payload["runtime_release_id"]:
+        raise ProspectiveValidationError("receipt/prediction runtime release mismatch")
+    if record["captured_at"] != payload["captured_at"]:
+        raise ProspectiveValidationError("receipt/prediction capture timestamp mismatch")
+    snapshot = cast(Mapping[str, Any], record["snapshot"])
+    expected_snapshot = {
+        "relative_path": f"outputs/daily/{session_date}.json",
+        "sha256": snapshot_binding.get("snapshot_sha256"),
+        "bytes": snapshot_binding.get("snapshot_size"),
+    }
+    if dict(snapshot) != expected_snapshot:
+        raise ProspectiveValidationError("prediction does not bind the accepted snapshot")
 
 
 def _fsync_directory(path: Path) -> None:

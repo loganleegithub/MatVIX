@@ -61,6 +61,16 @@ from matvix.pipeline import (
     persist_snapshot,
     resolve_persisted_probability_artifacts,
 )
+from matvix.prospective import (
+    ACTIVATION_TAG,
+    PROSPECTIVE_SCHEMA_VERSION,
+    SCIENTIFIC_COHORT_ID,
+    ProspectiveEvidenceError,
+    activation_identity,
+    capture_prediction_record,
+    read_prediction_record,
+    validate_receipt_evidence,
+)
 from matvix.source_identity import (
     OFFICIAL_SOURCE_IDENTITIES,
     SourceIdentity,
@@ -1270,6 +1280,61 @@ def with_snapshot_publication_binding(
     return bound
 
 
+def prospective_receipt_evidence(
+    paths: ProjectPaths,
+    snapshot: Mapping[str, Any],
+    probability_metadata: Mapping[str, Any],
+    snapshot_path: Path,
+    *,
+    captured_at: datetime,
+) -> dict[str, Any]:
+    """Capture the local prediction or report the frozen non-blocking status."""
+
+    identity = activation_identity(paths.root)
+    base = {
+        "schema_version": PROSPECTIVE_SCHEMA_VERSION,
+        "scientific_cohort_id": SCIENTIFIC_COHORT_ID,
+        "activation_tag": ACTIVATION_TAG,
+        "activation_commit": identity.activation_commit,
+        "runtime_release_id": identity.runtime_release_id,
+        "captured_at": captured_at.astimezone(UTC).isoformat(),
+        "prediction": None,
+        "capture_error": None,
+    }
+    if not identity.activated:
+        return {**base, "status": "PRE_ACTIVATION"}
+    if not identity.capture_ready or identity.runtime_release_id is None:
+        return {
+            **base,
+            "status": "EVIDENCE_CAPTURE_GAP",
+            "capture_error": identity.reason,
+        }
+    try:
+        result = capture_prediction_record(
+            project_dir=paths.root,
+            snapshot=snapshot,
+            probability_metadata=probability_metadata,
+            snapshot_path=snapshot_path,
+            captured_at=captured_at.astimezone(UTC),
+            runtime_release_id=identity.runtime_release_id,
+        )
+        record, binding = read_prediction_record(paths.root, str(snapshot["session_date"]))
+        if binding != result.binding:
+            raise DailyAcceptanceError("prediction binding changed after capture")
+        return {
+            **base,
+            "status": "LOCAL_CAPTURED",
+            "captured_at": record["captured_at"],
+            "prediction": result.binding.as_dict(),
+        }
+    except Exception as exc:
+        return {
+            **base,
+            "status": "EVIDENCE_CAPTURE_GAP",
+            "capture_error": type(exc).__name__,
+        }
+
+
 def _accepted_snapshot_session(paths: ProjectPaths, receipt_path: Path) -> str | None:
     try:
         receipt = read_json(receipt_path)
@@ -1293,11 +1358,34 @@ def _accepted_snapshot_session(paths: ProjectPaths, receipt_path: Path) -> str |
             return None
         if dict(publication_binding) != expected_binding:
             return None
+        prospective = receipt.get("prospective_evidence")
+        if prospective is not None:
+            if not isinstance(prospective, Mapping):
+                return None
+            validate_receipt_evidence(
+                paths.root,
+                session,
+                prospective,
+                snapshot_binding=expected_binding,
+            )
         if receipt_path.stat().st_mtime_ns < snapshot_path.stat().st_mtime_ns:
             return None
-    except (DailyAcceptanceError, KeyError, OSError, TypeError, ValueError):
+    except (
+        DailyAcceptanceError,
+        ProspectiveEvidenceError,
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
         return None
     return session
+
+
+def receipt_authorizes_snapshot(paths: ProjectPaths, receipt_path: Path) -> bool:
+    """Return whether a receipt currently authorizes its exact local snapshot."""
+
+    return _accepted_snapshot_session(paths, receipt_path) is not None
 
 
 def last_good_session(paths: ProjectPaths) -> str | None:
@@ -1565,13 +1653,27 @@ def _run_daily_update_locked(
             )
         else:
             write_json(candidate.metadata, paths.probability_metadata)
-        receipt = with_snapshot_publication_binding(receipt, snapshot_path)
         receipt_path = acceptance_receipt_path(paths, target)
-        receipt_changed = not _receipt_is_current(receipt_path, snapshot_path, receipt)
-        if receipt_changed:
-            receipt_writer(receipt, receipt_path)
-            if not _receipt_is_current(receipt_path, snapshot_path, receipt):
-                raise DailyAcceptanceError("acceptance receipt was not durably published last")
+        already_authorized = (
+            not snapshot_changed
+            and _accepted_snapshot_session(paths, receipt_path) == target.date().isoformat()
+        )
+        if already_authorized:
+            receipt_changed = False
+        else:
+            receipt["prospective_evidence"] = prospective_receipt_evidence(
+                paths,
+                candidate.payload,
+                candidate.metadata,
+                snapshot_path,
+                captured_at=current,
+            )
+            receipt = with_snapshot_publication_binding(receipt, snapshot_path)
+            receipt_changed = not _receipt_is_current(receipt_path, snapshot_path, receipt)
+            if receipt_changed:
+                receipt_writer(receipt, receipt_path)
+                if not _receipt_is_current(receipt_path, snapshot_path, receipt):
+                    raise DailyAcceptanceError("acceptance receipt was not durably published last")
         if snapshot_changed or receipt_changed:
             status = DailyUpdateStatus.PUBLISHED
             message = f"published accepted daily snapshot and receipt for {target.date()}"

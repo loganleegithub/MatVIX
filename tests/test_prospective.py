@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -13,9 +14,11 @@ from matvix.prospective import (
     ACTIVATION_TAG,
     PROSPECTIVE_SCHEMA_VERSION,
     SCIENTIFIC_COHORT_ID,
+    ActivationIdentity,
     ProspectiveConflictError,
     ProspectiveCorruptionError,
     ProspectiveValidationError,
+    activation_identity,
     binding_for_file,
     build_prediction_record,
     outcome_record_path,
@@ -203,3 +206,50 @@ def test_outcome_rejects_inconsistent_label_and_late_semantics(tmp_path: Path) -
     outcome["resolved_late"] = False
     with pytest.raises(ProspectiveValidationError, match="resolved_late mismatch"):
         validate_outcome_record(outcome)
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+    )
+
+
+def test_activation_requires_annotated_tag_clean_descendant_and_exact_head(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.name", "MatVIX Test")
+    _git(tmp_path, "config", "user.email", "matvix-test@example.invalid")
+    tracked = tmp_path / "release.txt"
+    tracked.write_text("release\n", encoding="utf-8")
+    _git(tmp_path, "add", "release.txt")
+    _git(tmp_path, "commit", "-m", "release")
+
+    absent = activation_identity(tmp_path)
+    assert absent == ActivationIdentity(
+        activated=False,
+        capture_ready=False,
+        activation_commit=None,
+        head_commit=_git(tmp_path, "rev-parse", "HEAD").stdout.strip(),
+        reason="ACTIVATION_TAG_ABSENT",
+    )
+
+    _git(tmp_path, "tag", ACTIVATION_TAG)
+    lightweight = activation_identity(tmp_path)
+    assert lightweight.activated is True
+    assert lightweight.capture_ready is False
+    assert lightweight.reason == "ACTIVATION_TAG_NOT_ANNOTATED"
+
+    _git(tmp_path, "tag", "-d", ACTIVATION_TAG)
+    _git(tmp_path, "tag", "-a", ACTIVATION_TAG, "-m", "activate Prospective 001")
+    active = activation_identity(tmp_path)
+    assert active.activated is True
+    assert active.capture_ready is True
+    assert active.activation_commit == active.head_commit
+    assert active.runtime_release_id == "git:" + str(active.head_commit)
+
+    tracked.write_text("dirty\n", encoding="utf-8")
+    dirty = activation_identity(tmp_path)
+    assert dirty.activated is True
+    assert dirty.capture_ready is False
+    assert dirty.reason == "TRACKED_WORKTREE_DIRTY"

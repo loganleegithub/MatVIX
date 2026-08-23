@@ -4,6 +4,7 @@ import hashlib
 import os
 import shutil
 import threading
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import pytest
 from conftest import make_observations, make_vx_history
 
 import matvix.daily_update as daily_update
-from matvix.calendar import decision_as_of, sessions_in_range
+from matvix.calendar import add_sessions, decision_as_of, sessions_in_range
 from matvix.daily_update import (
     DailyCandidate,
     DailyUpdateResult,
@@ -41,6 +42,7 @@ from matvix.data.point_in_time import merge_revision_history
 from matvix.features.futures_curve import select_standard_monthly_curve
 from matvix.http_runtime import find_latest_accepted_snapshot
 from matvix.pipeline import ProjectPaths
+from matvix.prospective import ActivationIdentity, prediction_record_path
 from matvix.storage import read_json, write_json, write_parquet
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -157,6 +159,45 @@ def _candidate(target: pd.Timestamp) -> DailyCandidate:
             "gates": [],
         },
     )
+
+
+def _prospective_candidate(
+    target: pd.Timestamp, *, candidate_probability: float = 0.31
+) -> DailyCandidate:
+    candidate = _candidate(target)
+    events: dict[str, dict[str, object]] = {}
+    metadata: dict[str, object] = {}
+    for event_id, horizon in {
+        "acute_front_stress_5d": 5,
+        "front_inversion_5d": 5,
+        "mid_curve_pressure_accelerates_5d": 5,
+        "broad_stress_persists_10d": 10,
+        "carry_environment_recovers_10d": 10,
+    }.items():
+        broad = event_id == "broad_stress_persists_10d"
+        valid = add_sessions(target, horizon).date().isoformat()
+        events[event_id] = {
+            "event_status": "ELIGIBLE",
+            "model_status": "BASE_RATE_ONLY" if broad else "CALIBRATED_MODEL",
+            "probability_kind": "HISTORICAL_REFERENCE" if broad else "FEATURE_CONDITIONAL",
+            "probability": 0.2 if broad else 0.3,
+            "base_rate": 0.2,
+            "valid_through_session": valid,
+        }
+        metadata[event_id] = (
+            {"publication_policy": "BASE_RATE_ONLY_EXEMPT"}
+            if broad
+            else {
+                "publication_method": "ROLLING_INTERCEPT_252",
+                "candidate_probability": candidate_probability,
+            }
+        )
+    payload = {
+        **candidate.payload,
+        "decision_as_of": decision_as_of(target).isoformat(),
+        "probability_judgment": events,
+    }
+    return replace(candidate, payload=payload, metadata=metadata)
 
 
 def _write_bound_receipt(
@@ -724,6 +765,185 @@ def test_receipt_failure_leaves_new_snapshot_unauthorized_and_preserves_last_goo
     assert last_good_session(paths) == prior.date().isoformat()
     accepted = find_latest_accepted_snapshot(tmp_path)
     assert accepted is not None and accepted.session_date == prior.date().isoformat()
+
+
+def _activated_identity() -> ActivationIdentity:
+    return ActivationIdentity(
+        activated=True,
+        capture_ready=True,
+        activation_commit="b" * 40,
+        head_commit="c" * 40,
+        reason="ACTIVE_CLEAN_RELEASE",
+    )
+
+
+def test_activated_daily_update_writes_prediction_before_bound_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observations, vx, target = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+    now = decision_as_of(target) + timedelta(minutes=5)
+    monkeypatch.setattr(daily_update, "activation_identity", lambda _root: _activated_identity())
+
+    first = run_daily_update(
+        tmp_path,
+        target,
+        now=now,
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _prospective_candidate(target),
+    )
+    prediction = prediction_record_path(tmp_path, target.date().isoformat())
+    receipt_path = acceptance_receipt_path(paths, target)
+    receipt = read_json(receipt_path)
+
+    assert first.status == DailyUpdateStatus.PUBLISHED
+    assert prediction.exists()
+    assert receipt["prospective_evidence"]["status"] == "LOCAL_CAPTURED"
+    assert receipt["prospective_evidence"]["prediction"]["sha256"].startswith("sha256:")
+    assert receipt_path.stat().st_mtime_ns >= prediction.stat().st_mtime_ns
+    assert find_latest_accepted_snapshot(tmp_path) is not None
+
+    prediction_mtime = prediction.stat().st_mtime_ns
+    receipt_mtime = receipt_path.stat().st_mtime_ns
+    second = run_daily_update(
+        tmp_path,
+        target,
+        now=now + timedelta(minutes=1),
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _prospective_candidate(target),
+    )
+    assert second.status == DailyUpdateStatus.ALREADY_CURRENT
+    assert prediction.stat().st_mtime_ns == prediction_mtime
+    assert receipt_path.stat().st_mtime_ns == receipt_mtime
+
+
+def test_receipt_failure_recovers_orphan_prediction_idempotently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observations, vx, target = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+    now = decision_as_of(target) + timedelta(minutes=5)
+    monkeypatch.setattr(daily_update, "activation_identity", lambda _root: _activated_identity())
+
+    def fail_receipt(_: dict[str, object], __: str | Path) -> Path:
+        raise OSError("simulated receipt failure")
+
+    failed = run_daily_update(
+        tmp_path,
+        target,
+        now=now,
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _prospective_candidate(target),
+        receipt_writer=fail_receipt,
+    )
+    prediction = prediction_record_path(tmp_path, target.date().isoformat())
+    original_prediction = prediction.read_bytes()
+    assert failed.status == DailyUpdateStatus.FAILED
+    assert not acceptance_receipt_path(paths, target).exists()
+
+    recovered = run_daily_update(
+        tmp_path,
+        target,
+        now=now + timedelta(minutes=1),
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _prospective_candidate(target),
+    )
+    assert recovered.status == DailyUpdateStatus.PUBLISHED
+    assert prediction.read_bytes() == original_prediction
+    assert read_json(acceptance_receipt_path(paths, target))["prospective_evidence"][
+        "status"
+    ] == "LOCAL_CAPTURED"
+
+
+def test_capture_gap_is_published_degraded_evidence_and_never_backfilled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observations, vx, target = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+    now = decision_as_of(target) + timedelta(minutes=5)
+    monkeypatch.setattr(daily_update, "activation_identity", lambda _root: _activated_identity())
+
+    def fail_capture(**_kwargs: object) -> object:
+        raise OSError("simulated evidence filesystem failure")
+
+    monkeypatch.setattr(daily_update, "capture_prediction_record", fail_capture)
+    first = run_daily_update(
+        tmp_path,
+        target,
+        now=now,
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _prospective_candidate(target),
+    )
+    receipt_path = acceptance_receipt_path(paths, target)
+    first_receipt = receipt_path.read_bytes()
+    receipt = read_json(receipt_path)
+    assert first.status == DailyUpdateStatus.PUBLISHED
+    assert receipt["prospective_evidence"] == {
+        "schema_version": "1.0.0",
+        "status": "EVIDENCE_CAPTURE_GAP",
+        "scientific_cohort_id": "MATVIX_V3_0_1_CORE",
+        "activation_tag": "matvix-prospective-001-activation",
+        "activation_commit": "b" * 40,
+        "runtime_release_id": "git:" + "c" * 40,
+        "captured_at": now.astimezone(UTC).isoformat(),
+        "prediction": None,
+        "capture_error": "OSError",
+    }
+    assert find_latest_accepted_snapshot(tmp_path) is not None
+    assert not prediction_record_path(tmp_path, target.date().isoformat()).exists()
+
+    def forbidden_capture(**_kwargs: object) -> object:
+        raise AssertionError("a receipt-backed gap must never be backfilled")
+
+    monkeypatch.setattr(daily_update, "capture_prediction_record", forbidden_capture)
+    second = run_daily_update(
+        tmp_path,
+        target,
+        now=now + timedelta(minutes=1),
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _prospective_candidate(target),
+    )
+    assert second.status == DailyUpdateStatus.ALREADY_CURRENT
+    assert receipt_path.read_bytes() == first_receipt
+    assert not prediction_record_path(tmp_path, target.date().isoformat()).exists()
+
+
+def test_same_session_changed_snapshot_cannot_overwrite_prediction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observations, vx, target = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+    now = decision_as_of(target) + timedelta(minutes=5)
+    monkeypatch.setattr(daily_update, "activation_identity", lambda _root: _activated_identity())
+
+    first_candidate = _prospective_candidate(target, candidate_probability=0.31)
+    first = run_daily_update(
+        tmp_path,
+        target,
+        now=now,
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: first_candidate,
+    )
+    prediction = prediction_record_path(tmp_path, target.date().isoformat())
+    original_prediction = prediction.read_bytes()
+    changed_candidate = _prospective_candidate(target, candidate_probability=0.32)
+    changed_candidate.payload["probability_judgment"]["acute_front_stress_5d"][
+        "probability"
+    ] = 0.32
+    second = run_daily_update(
+        tmp_path,
+        target,
+        now=now + timedelta(minutes=1),
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: changed_candidate,
+    )
+
+    assert first.status == DailyUpdateStatus.PUBLISHED
+    assert second.status == DailyUpdateStatus.PUBLISHED
+    assert prediction.read_bytes() == original_prediction
+    receipt = read_json(acceptance_receipt_path(paths, target))
+    assert receipt["prospective_evidence"]["status"] == "EVIDENCE_CAPTURE_GAP"
+    assert receipt["prospective_evidence"]["capture_error"] == "ProspectiveConflictError"
 
 
 def test_daily_update_failure_preserves_prior_last_good(tmp_path: Path) -> None:
