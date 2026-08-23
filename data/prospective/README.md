@@ -1,12 +1,23 @@
 # MatVIX prospective evidence directories
 
-The proposed V3 Core prospective protocol is currently a non-executed human-review draft in
-`MATVIX_PROSPECTIVE_001_CONTRACT.md`. No runtime writer, Schema, activation tag or formal
-Core prospective sample exists yet. Historical release snapshots must not be backfilled.
+This file is a directory index, not a second protocol description. Current freeze, P6 and
+external-consumer semantics are defined only in
+`MATVIX_V3_EXTERNAL_STRATEGY_CONSUMER.md`.
 
-The authorized read-only P0 feasibility analysis is recorded in
-`MATVIX_PROSPECTIVE_001_POWER_DESIGN.md`. Its proposed evidence counts, estimands and verdict
-rules are recommendations only; they have not been frozen into the construction contract.
+Prospective 001 P6 is activated by `matvix-prospective-001-activation`. Runtime Prediction
+and Outcome Schemas and the append-only writer/resolver are installed. At the 2026-08-24
+repository freeze no natural Core prediction had yet been captured; runtime counts may
+advance after that date and must be read from `/api/status` or the Core paths below. Historical
+snapshots must never be backfilled.
+
+Document roles are deliberately distinct: `MATVIX_PROSPECTIVE_001_CONTRACT.md` is the frozen
+protocol, `MATVIX_PROSPECTIVE_001_POWER_DESIGN.md` is the pre-freeze P0 evidence, and
+`MATVIX_PROSPECTIVE_001_ACCEPTANCE.md` is the point-in-time P5 report. Their earlier-stage
+status lines are historical evidence rather than claims about the current P6 state.
+
+- Core predictions: `core/predictions/YYYY-MM-DD.json`
+- Core outcomes: `core/outcomes/YYYY-MM-DD/EVENT_ID.json`
+- Core provenance: `core/README.md`
 
 The CSV below is a separate rejected-adapter counterfactual ledger.
 

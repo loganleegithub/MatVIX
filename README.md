@@ -15,11 +15,18 @@ trading permission.
 - `NO_TRADING_AUTHORITY`
 - `HISTORICAL_CORE_ACCEPTED`
 - `PROSPECTIVE_CONFIRMATION_PENDING`
+- `V3_FINAL_FROZEN`
 
 The scientific core release tag is `matvix-v3.0.1`. Prospective evidence capture has a
 separate activation boundary, `matvix-prospective-001-activation`. The frozen scientific
 Feature, State, Probability and Schema surface remains `3.0.0`; the recorder changes no
 model, threshold or probability contract.
+
+The full repository freeze is bound by `matvix-v3-final-freeze-2026-08-24`. The single
+normative guide for an external strategy or AI agent is
+`MATVIX_V3_EXTERNAL_STRATEGY_CONSUMER.md`; it also records the P6 closure and the boundary
+between frozen repository bytes and append-only runtime evidence. The P0 Power Design and
+P5 Acceptance files remain stage-specific audit evidence, not current P6 status pages.
 
 ## Frozen V3 surface
 
@@ -140,7 +147,7 @@ dashboard and `/api/status` expose freshness, event/model status and overall pro
 readiness. `READY`, `DEGRADED` and `BLOCKED` are publication-health states only; all three
 remain non-trading states.
 
-After the annotated Prospective 001 activation tag exists, a successful daily publication
+The annotated Prospective 001 activation tag now exists. A successful daily publication
 writes an exclusive, read-only local prediction record before publishing its final receipt.
 The receipt binds both the exact snapshot and prediction bytes. Five or ten XNYS sessions
 later, the resolver appends a separate outcome record; it never edits the prediction.
