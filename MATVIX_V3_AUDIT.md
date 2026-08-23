@@ -1,6 +1,6 @@
 # MatVIX V3 阶段 A 业务审计与阶段 B 语义冻结
 
-> 合同：`MATVIX_V3_CONSTRUCTION_PLAN.md` v1.2
+> 合同：`MATVIX_V3_CONSTRUCTION_PLAN.md` v1.3
 > 审计日期：2026-08-22
 > 最近修订：2026-08-23
 > 分支：`codex/matvix-v3`
@@ -8,9 +8,10 @@
 > 原合同提交：`b1394e7aa87de3e37648ed6fd61e47a33cf22df8`
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
-> 当前裁决：`PROB-FRAGILITY-002=REJECTED_INSUFFICIENT_PUBLISHED_OOF / CONTRACT_STOP`
-> 下一项：`NONE_WITHOUT_NEW_PURE_DOCUMENT_CONTRACT`
-> 最高允许结论：`STATION_NOT_READY / STAGE_D_BLOCKED / NO_ADAPTER / NO_ECONOMIC_PROBE / NO_PRODUCTION_PROMOTION`
+> v1.3 修订提交：本次纯文档冻结提交（以 Git 历史为准）
+> 当前裁决：`FOUR_MODEL_STATION_SCOPE / FORMAL_FRAGILITY_REJECT_RETAINED`
+> 下一项：`STATE-CHURN-002`
+> 最高允许结论：`HISTORICAL_RESEARCH_SUPPORT / RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION`
 
 ---
 
@@ -58,6 +59,20 @@ Fragility 唯一正式候选因 published OOF 不足触发第 11.1 节停止：
 PROB-CARRY-SATURATION-003=PASS / HISTORICAL_RESEARCH_SUPPORT
 → PROB-FRAGILITY-002=REJECTED_INSUFFICIENT_PUBLISHED_OOF
 → CONTRACT_STOP
+```
+
+2026-08-23 的人类随后以合同 v1.3 选择第四路径：不改 252 门、不把 114 条 OOF 升格为有效概率，
+而是把正式气象站冻结为 acute/front/mid/carry 四个条件模型加 Broad 基准率参考；Fragility 的正式
+拒绝保持不变。唯一候选数值输出只可在阶段 D 通过后，以
+`UNQUALIFIED_FRAGILITY_VETO_SHADOW` 在 adapter/policy 层接受一次只减仓的历史证伪。该决定解除的
+是正式产品范围阻断，不是统计门；当前恢复顺序为：
+
+```text
+STATE-CHURN-002
+→ STAGE_D: FOUR CONDITIONAL MODELS + ONE BASE-RATE REFERENCE
+→ STAGE_E: PURE-DOCUMENT VETO SHADOW FREEZE
+→ ADAPTER-002
+→ STAGE_F: ONE ECONOMIC PROBE
 ```
 
 ---
@@ -323,7 +338,7 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
   Schema、acceptance、dashboard、pipeline 与对应测试；一次性 Stage-A Python 脚手架已按 12.9 删除。
 - semantic/version impact：probability/output/model/package 已升 3.0.0；artifact contract 已升 2。
 - station acceptance criterion：无负 slope；逐行 publication 算术、cohort、purge、append invariance
-  可重放；三个当前 PASS 事件不退化；五个必需条件模型各自满足 252/20/20/Skill/ECE 门。
+  可重放；三个当前 PASS 事件不退化；四个必需条件模型各自满足 252/20/20/Skill/ECE 门。
 - economic relevance：只修复概率可信度，不直接证明收益。
 - status：`IMPLEMENTED / FORMAL_HISTORICAL_REPLAY_PASS`
 
@@ -382,16 +397,19 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - reproduction command：同上；见 `calm_carry_breaks_5d`。
 - causal evidence：371 completed、158/213 classes、74 overlapping-window clusters、两窗基准率约
   42%、最大现有标签一致率 64.42%。
-- business consequence：若未来正式通过，才可能为价格盲 Short adapter 提供 fragility predicate。
-- minimal repair：阶段 B 一次冻结 weather-only 5D label 与最小 predictor set，完整 rolling-origin 验收。
+- business consequence：唯一正式候选没有资格进入气象站概率层；任何下游使用都必须与正式站隔离，
+  且只能减少既有 Short 暴露。
+- minimal repair：无概率修复。保留唯一候选失败证据并从正式运行表面移除；v1.3 仅允许阶段 E
+  复现同一候选为 `UNQUALIFIED_RESEARCH_SCORE`。
 - rejected alternatives：ETF 日期筛选、Tail/VRP 直接并入 carry answer、阈值扫描、Dashboard 半成品。
-- affected existing files：feature percentile、constants/config、targets、walk-forward、publication、
-  acceptance、Schema 与测试。
-- semantic/version impact：正式接纳进事件集合；feature/probability/schema/model/package 升 3.0.0。
-- station acceptance criterion：正式 rolling-origin 252/20/20、Skill≥2%、ECE≤7%、cluster stability，
-  且其余四个必需条件模型与 Broad 基准率参考分别 PASS。
-- economic relevance：仅在阶段 D 全通过后才允许适配器消费。
-- status：`REJECTED_INSUFFICIENT_PUBLISHED_OOF / CONTRACT_STOP`
+- affected existing files：候选曾涉及 feature/config/targets/walk-forward/publication/acceptance/Schema/
+  Dashboard 与测试；这些正式路径已从跟踪树移除。后续只允许 adapter 隔离实现。
+- semantic/version impact：不属于正式 V3 event/schema/model surface；失败候选只保留审计 hash。
+- station acceptance criterion：`FRAGILITY_BOUNDARY=PASS` 要求正式目录、Schema、Dashboard、daily
+  output 与模型计数均不含该事件，并保留 114/252 `NOT_ELIGIBLE` 证据。
+- economic relevance：阶段 D 通过后，只可作为 exposure-reducing veto shadow 接受一次历史证伪；
+  经济结果不能提升其概率资格。
+- status：`CLOSED_BY_SCOPE / FORMAL_REJECT_RETAINED / NOT_A_MODEL_PASS`
 
 ### 9.5 `STATE-CHURN-002`
 
@@ -433,18 +451,20 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - defect_id：`ADAPTER-002`
 - severity：P1
 - layer：ADAPTER
-- observed symptom：阶段 D 尚未运行，入口仍未满足。
+- observed symptom：正式 Fragility 因 114/252 被拒绝；v1.3 只授权四模型站通过后的隔离减仓 veto。
 - reproduction command：读取本审计 `contract_stop_conditions`；不得运行经济命令。
-- causal evidence：Broad 已按人类范围决定关闭为基准率参考；bounded Carry 已通过原正式门，
-  但 Fragility 尚未产生正式 OOF，Stage C/D 均未完成。
-- business consequence：Short V3 probe 为 `NOT_ELIGIBLE`。
-- minimal repair：无；必须先关闭全部 P0/P1 station defect并完成阶段 D。
-- rejected alternatives：BASE_RATE_ONLY 替代 fragility、Tail/VVIX/VRP 并列硬门、提前读取价格。
+- causal evidence：Broad 基准率与 bounded Carry 已通过；Fragility 唯一候选只有 114 条完成 OOF，
+  确定性 VVIX/SKEW 规则和 acute 替代也没有充分捕获其天气正例。
+- business consequence：阶段 D 前 Short V3 probe 仍为 `NOT_ELIGIBLE`；阶段 D 后只允许研究型减仓门。
+- minimal repair：先完成 `STATE-CHURN-002` 与四模型阶段 D，再纯文档冻结唯一 shadow mapping。
+- rejected alternatives：Fragility BASE_RATE_ONLY、正式概率特批、Tail/VVIX/VRP 第二硬门、确定性红灯、
+  acute 替代、阈值扫描、提前读取价格。
 - affected existing files：无。
 - semantic/version impact：无适配器规格冻结、无代码、无版本变化。
-- station acceptance criterion：合同第 6.5 节全部满足且站内验收提交后工作树干净。
-- economic relevance：阶段 F 未授权。
-- status：`BLOCKED_BY_STAGE_D`
+- station acceptance criterion：合同第 6.5 节四模型、Broad reference 与 Fragility boundary 全部满足，
+  且站内验收提交后工作树干净。
+- economic relevance：阶段 F 只可运行一次；成功最多 `HISTORICAL_RESEARCH_SUPPORT`，失败即拒绝。
+- status：`AUTHORIZED_AFTER_STAGE_D / UNQUALIFIED_VETO_SHADOW_ONLY`
 
 ### 9.8 `PROB-CARRY-SATURATION-003`
 
@@ -596,11 +616,66 @@ NO_PUSH
 NO_PRODUCTION_PROMOTION
 ```
 
+### 11.2 合同 v1.3 的第四路径裁决
+
+本节只使用天气审计账本与唯一候选的冻结 OOF 证据，`PRODUCT_PRICES_READ=FALSE`。三条替代路径
+在升版前按其原始主张做了机械核对：
+
+1. **确定性物理断路器未获接纳。** 用现有 causal percentile 语义固定复现
+   `d1_log_vvix > 2.5σ OR SKEW percentile >= 95%`，在 371 个完成 calm-carry 标签上触发 70 次，
+   `TP/FP/FN/TN=36/34/122/179`，sensitivity 22.78%、precision 51.43%、FPR 15.96%。其中
+   VVIX 2.5σ 单独只触发 1 次；组合只捕获 4/26 个 `HARD_ACUTE`、0/9 个 front inversion、
+   12/58 个 broad-pressure 和 33/152 个 carry-closed-2 组件。它不是已经证明可直接清仓的物理定律。
+2. **全市场 acute 模型不能替代子状态。** 正式 acute 模型自身通过并保留；但在 365 个可共同匹配的
+   calm-carry 完成行上，用同样预冻结的 `published score > causal base rate` 只触发 30 次，
+   `TP/FP=10/20`、正例 sensitivity 6.41%，且未捕获 26 个 `HARD_ACUTE` fragility 组件中的任何一个。
+   因此不把它改写成 Short 专用 Fragility 模型。
+3. **日历跨度不能替代 published OOF。** 114 个完成 published OOF 跨 2023–2026，年度计数为
+   `33/46/32/3`，正负为 44/70，但只有 19 个独立正例簇；即使采用外部建议的 50-cluster 辅助条件，
+   也未达门。252 样本门与 completed/outcome-available 口径保持不变。
+
+由此冻结第四路径：
+
+```text
+FORMAL_STATION_MODELS = acute + front + mid + carry
+BROAD = BASE_RATE_ONLY_REFERENCE
+PROB-FRAGILITY-002 = CLOSED_BY_SCOPE / FORMAL_REJECT_RETAINED
+FORMAL_FRAGILITY_EVENT = ABSENT
+
+ADAPTER_RESEARCH_HYPOTHESIS = UNQUALIFIED_FRAGILITY_VETO_SHADOW
+allowed direction = SVXY -> SGOV only
+threshold = frozen shadow_score > frozen causal_base_rate
+formal probability/model claim = prohibited
+economic runs = exactly one, after Stage-D and pure-document Stage-E freeze
+```
+
+未来稀疏概率候选新增 `OOF_CAPACITY_PRECHECK`：在业务实现前按 eligibility、training minimum、purge、
+horizon、outcome availability 与固定截止日计算 completed published OOF 的机械上限；上限低于正式门
+即停止概率施工。该治理只防止无效实现，不为当前 Fragility 补样本或改变既有失败。
+
+v1.3 恢复施工时的裁决：
+
+```text
+PROB-CAL-002=PASS
+PROB-BROAD-002=BASE_RATE_REFERENCE_PASS
+PROB-CARRY-SATURATION-003=PASS_HISTORICAL_RESEARCH_SUPPORT
+PROB-FRAGILITY-002=CLOSED_BY_SCOPE_FORMAL_REJECT_RETAINED
+STATE-CHURN-002=NEXT_AUTHORIZED
+STAGE_D=AUTHORIZED_AFTER_CHURN
+ADAPTER-002=AUTHORIZED_ONLY_AFTER_STAGE_D_AND_STAGE_E_DOC_FREEZE
+ECONOMIC_PROBE=ONE_RUN_ONLY_AFTER_ADAPTER_COMMIT
+PRODUCT_PRICES_READ=FALSE
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
 ## 12. 阶段 B：V3 语义与 Schema 冻结
 
 本节最初由合同 v1.1 授权，是第一行业务语义代码修改前的阶段 B 规格。合同 v1.2 只替换第 12.4
-节的 Carry transformed-age 字段并补充一次性失败行为；其余集合、公式、窗口、枚举、顺序和失败
-行为不得根据后续 OOF 或经济结果修改。
+节的 Carry transformed-age 字段。合同 v1.3 在第 11.2 节的人类范围决定下，只把未达样本门的
+Fragility 从正式事件/Schema/模型计数移除，并授权阶段 D 后另行冻结 adapter shadow；其历史标签、
+候选公式、hash 和失败行为不根据经济结果修改。
 
 ### 12.1 版本与正式事件目录
 
@@ -625,10 +700,11 @@ probability_artifact_contract_version = 2
 | `mid_curve_pressure_accelerates_5d` | 5 | `FEATURE_CONDITIONAL_REQUIRED` | V2 六项不变 |
 | `broad_stress_persists_10d` | 10 | `BASE_RATE_ONLY_EXEMPT` | 无；禁止训练模型 |
 | `carry_environment_recovers_10d` | 10 | `FEATURE_CONDITIONAL_REQUIRED` | V2 六项加 bounded age 与 recovering flag |
-| `calm_carry_breaks_5d` | 5 | `FEATURE_CONDITIONAL_REQUIRED` | 本节冻结四项 |
+| `calm_carry_breaks_5d` | 5 | `FORMAL_REJECT_RETAINED / NOT_IN_RUNTIME` | 唯一失败候选四项只作审计证据 |
 
-因此阶段 D 验收对象是五个条件模型与一个 Broad 基准率参考。任何条件模型缺样本或未通过门，
-均不能用 `BASE_RATE_ONLY` 抵消 `PROBABILITY_MODEL=FAIL`。
+因此阶段 D 验收对象是四个条件模型与一个 Broad 基准率参考，并单独检查
+`FRAGILITY_BOUNDARY`。任何必需条件模型缺样本或未通过门，均不能用 `BASE_RATE_ONLY` 或
+unqualified shadow 抵消 `PROBABILITY_MODEL=FAIL`。
 
 ### 12.2 统一 BaseRate、Logistic 与 rolling intercept
 
@@ -712,8 +788,8 @@ intercept_b
 V3 不保留 `decision_score / base_probability / calibrated_probability / platt_a / platt_b` 的平行正式
 字段。历史 V2 列只在冻结 Git/artifact 中存在。
 
-`daily_output.schema.json` 必须把第六个 Fragility event 加为 required，并把每个 event 的 required
-字段扩展为：
+`daily_output.schema.json` 不得包含已拒绝的第六个 Fragility event。五个正式 event（四个条件模型
+加 Broad reference）的 required 字段为：
 
 ```text
 event_status
@@ -796,9 +872,10 @@ Logistic、regularization、rolling fit、校准、purge、252/20/20、Skill≥2
 只允许一次正式全历史/OOF 重建。通过只记 `HISTORICAL_RESEARCH_SUPPORT` 并进入下一 defect；
 失败即 `CONTRACT_STOP`，不得尝试其他 cap、惩罚、feature、model、window 或 calibrator。
 
-### 12.5 `PROB-FRAGILITY-002` 正式事件
+### 12.5 `PROB-FRAGILITY-002` 唯一失败候选的冻结证据
 
-当前时点 eligibility：
+以下是已经执行并失败的唯一正式候选规格，用于 hash 重放和阶段 E shadow 来源约束；v1.3 后它不再
+是正式事件、不得恢复进 runtime/Schema/Dashboard。候选当时的 eligibility 为：
 
 ```text
 data_status == OK
@@ -845,7 +922,9 @@ p_neg_spx_5d_log_momentum
 
 选择依据只来自阶段 A 预列名、两窗同向且 confirmation Brier 增量为正的价格盲诊断；未读取 ETF
 结果。明确拒绝 Tail/VRP 硬门、VVIX/VIX residual、SKEW、threshold/model/window/feature subset 扫描。
-这一个正式 rolling-origin 模型如果不通过完整门，`PROB-FRAGILITY-002` 失败并停止阶段 E。
+这一个 rolling-origin 候选已因 114/252 失败。v1.3 保留该失败并关闭正式概率范围；阶段 E 只能在
+阶段 D 通过后，把同一数值构造隔离复现为 `UNQUALIFIED_RESEARCH_SCORE`，不得改变 predictor、模型、
+窗口、门槛或名称边界。
 
 ### 12.6 `PROB-BROAD-002` 基准率豁免
 
@@ -898,7 +977,7 @@ event/answer/probability 差异或 UNKNOWN bridge，`STATE-CHURN-002=FAIL`。不
 
 ### 12.8 阶段 D 验收与停止门
 
-五个 `FEATURE_CONDITIONAL_REQUIRED` 事件各自在最新 252 个完成、当时实际可发布 OOF 上必须满足：
+四个 `FEATURE_CONDITIONAL_REQUIRED` 事件各自在最新 252 个完成、当时实际可发布 OOF 上必须满足：
 
 ```text
 samples = 252
@@ -913,13 +992,13 @@ ECE <= 7%
 
 - acute/front/mid 不得因统一校准退化；
 - Carry duration 不跨 gap，且 reliability 不倒置；
-- Fragility 必须保持天气-only、完整五日、至少 20 个独立正例簇且不是既有事件改名；
+- Fragility 必须保持从正式目录、Schema、Dashboard 与模型计数移除，并保留 114/252 拒绝证据；
 - Broad 必须通过 `BASE_RATE_REFERENCE`，但不得出现在模型通过计数；
 - V2 DATA/TENOR、raw state answer、raw event timing、PIT 与 UNKNOWN 传播不退化；
 - Churn 只改变允许的 risk-on phase publication，risk-off timing 完全不劣于 V2；
 - probability OOF 和 daily event 的公式、Schema、cache digest 与 append invariance 全部可重放。
 
-任一条件模型、Broad reference、完整性或 P0/P1 defect 未通过时，结论固定为
+任一必需条件模型、Broad reference、Fragility boundary、完整性或其他 P0/P1 defect 未通过时，结论固定为
 `STATION_NOT_READY`，不得编写阶段 E adapter 或读取产品价格。
 
 ### 12.9 变更预算与阶段 A 代码归档

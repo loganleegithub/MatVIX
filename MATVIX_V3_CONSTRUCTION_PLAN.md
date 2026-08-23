@@ -1,14 +1,14 @@
 # MatVIX V3 概率、脆弱性与状态稳定性施工合同
 
-> 状态：AMENDED / PROB-CARRY-SATURATION-003 AUTHORIZED
-> 合同版本：1.2
+> 状态：AMENDED / V1.3 FOUR-MODEL STATION + UNQUALIFIED VETO SHADOW AUTHORIZED
+> 合同版本：1.3
 > 冻结日期：2026-08-22
 > 修订日期：2026-08-23
 > V2 代码基线：`a2a8a584f6435d7ffc972eb57b0928eeb0e4a802`
 > 正式 main 基线：`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`
 > 目标分支：`codex/matvix-v3`
 > 执行方式：下一独立 Codex session 直接审计、冻结规格、按 defect_id 施工和本地复核
-> 核心顺序：概率校准治理 → Carry duration → 唯一 bounded-duration 修复 → 凸性脆弱性事件 → risk-on 状态微震荡 → 完整站内验收 → 固定适配器 → 一次经济诊断与前向观察
+> 核心顺序：概率校准治理 → Carry duration → 唯一 bounded-duration 修复 → Fragility 正式拒绝并关闭概率范围 → risk-on 状态微震荡 → 四模型完整站内验收 → 价格盲冻结唯一减仓 veto shadow → 一次经济诊断与前向观察
 
 ---
 
@@ -49,14 +49,40 @@ P1 缺陷 `PROB-CARRY-SATURATION-003`：
 - 只允许一次实现和一次正式全历史/OOF 重建；若失败立即停止，不得第三次 Carry 尝试；
 - 历史通过最多构成 `HISTORICAL_RESEARCH_SUPPORT`，不得表述为独立确认、经济改进或晋升。
 
-该修订不提前授权 Fragility、Churn、阶段 D、适配器或经济探针；它们仍取决于这次 Carry 正式门。
+该修订当时不提前授权 Fragility、Churn、阶段 D、适配器或经济探针；它们仍取决于这次 Carry 正式门。
+bounded Carry 随后在原门下通过，但 `calm_carry_breaks_5d` 的唯一正式候选截至固定验收日只有
+114 条 outcome-available published OOF，未达到 252 门并已按 v1.2 从正式事件集合和运行表面移除。
+
+2026-08-23 的人类明确决定以 v1.3 采用第四路径。该决定不降低样本门、不把失败改写成通过，
+而是关闭产品范围并隔离一个只减仓的研究假说：
+
+- `PROB-FRAGILITY-002` 保持 `REJECTED_INSUFFICIENT_PUBLISHED_OOF`，不得进入正式概率目录、
+  Schema、Dashboard、station model pass 或 phase/state 语义；
+- 正式气象站收敛为 acute/front/mid/carry 四个 `FEATURE_CONDITIONAL_REQUIRED` 模型，加 Broad
+  一个 `BASE_RATE_ONLY` 参考；
+- 不采用 `d1_log_vvix > 2.5σ OR SKEW >= 95%` 确定性断路器。该固定规则只捕获
+  36/158 个完成正例，且只捕获 4/26 个 `HARD_ACUTE` 组件，不能冒充已经验证的物理规律；
+- 不用全市场 acute 模型替代 calm-carry 子状态。现有 acute 概率在共同子状态中只捕获
+  10/156 个正例，并未捕获 26 个 `HARD_ACUTE` 组件中的任何一个；
+- 不把 3 个以上日历年等同 252 个 OOF。114 个完成 OOF 中只有 19 个独立正例簇，连提议的
+  50-cluster 辅助门也未达到；
+- 只允许在阶段 E 的 adapter/policy 层复现已冻结候选的数值输出，命名为
+  `UNQUALIFIED_FRAGILITY_VETO_SHADOW`。它不是概率通过、不能增加 Short 暴露、不能影响 Long，
+  且不得进入正式气象站输出；
+- `STATE-CHURN-002`、阶段 D、阶段 E/F 依下文新入口门恢复施工。历史经济诊断仍只有一次，
+  最大结论仍为 `HISTORICAL_RESEARCH_SUPPORT / NO_PRODUCTION_PROMOTION`。
+
+从 v1.3 起，任何稀疏子状态概率候选在写业务实现前都必须先过 `OOF_CAPACITY_PRECHECK`：按冻结
+eligibility、training minimum、purge、horizon 与验收截止日机械计算可形成的 completed published
+OOF 上限；上限不足正式样本门时直接 `NOT_ELIGIBLE`，不得靠实现、降门、日历跨度或伪样本绕过。
 
 V3 只回答六个问题：
 
 1. 当前顺序 Platt 为什么把本来有排序增量的 Carry 原始概率校准坏？
 2. Carry 恢复是否首先是带有 spell-age 依赖的离散时间 hazard，而不是缺少更多市场指标？
 3. Broad direct-10D 被诚实降级后，如何发布可重放且不冒充条件模型的因果基准率参考？
-4. 能否在不读取产品价格的条件下定义并验证“平静 Carry 下未来 5 日天气恶化”的凸性脆弱性事件？
+4. “平静 Carry 下未来 5 日天气恶化”为什么未取得正式概率资格，以及它能否只作为隔离的减仓
+   veto shadow 接受一次经济证伪？
 5. 947 次 phase 转换中，哪些是真实天气变化，哪些才是无业务意义的 micro-churn？
 6. 站内全部通过后，一个事先冻结、非调参的 V3 Short 适配器能否相对 V2 同时改善收益、最大回撤与 Worst-20D？
 
@@ -148,6 +174,9 @@ V3 正式实现采用就地升级：
 - 不建设通用 ML 平台、模型搜索器、feature store、状态治理框架、renderer 或发布框架；
 - 不购买、抓取或导入新的 SPX option chain、SKEW term structure 或 SPX OHLC 数据；
 - 不用 Bayesian prior、合成标签、重采样伪样本或降低样本门制造通过；
+- 不用日历跨度、市场周期叙事或 in-sample 标签替代 completed published OOF；
+- 不把 `UNQUALIFIED_FRAGILITY_VETO_SHADOW` 写成 event probability、calibrated model、state、
+  phase、正式 Schema 字段或 Dashboard 卡片；
 - 不把历史经济诊断表述为未污染的确认集或真实前瞻绩效。
 
 ---
@@ -472,10 +501,10 @@ status
 | `PROB-CARRY-002` | IMPLEMENTED / FAIL_ECE | PROBABILITY | Carry recovery duration 带来强 Skill，但 ECE 7.413% 未过门 |
 | `PROB-CARRY-SATURATION-003` | REQUIRED / AUDIT_CONFIRMED | PROBABILITY | 极长 spell 的无界 age 外推与校准残差 |
 | `PROB-BROAD-002` | CLOSED_BY_SCOPE | PROBABILITY | direct-10D 条件模型拒绝；固定为 `BASE_RATE_ONLY` 参考并豁免模型门 |
-| `PROB-FRAGILITY-002` | REQUIRED / AUDIT_ACCEPTED | PROBABILITY | `calm_carry_breaks_5d` 正式进入阶段 B 冻结与完整模型验收 |
+| `PROB-FRAGILITY-002` | CLOSED_BY_SCOPE / FORMAL_REJECT_RETAINED | PROBABILITY | 唯一候选仅 114 条完成 published OOF；不得进入正式事件目录或模型通过计数 |
 | `STATE-CHURN-002` | REQUIRED_LIMITED | STATE/TIMING | 只允许处理阶段 A 编号的 14 个 risk-on 候选；20 个 risk-off 禁止阻尼 |
 | `DATA-OPTION-002` | DEFERRED | DATA | 需要新授权数据时另行立项，不属于默认 V3 |
-| `ADAPTER-002` | BLOCKED_BY_STAGE_D | ADAPTER | 站内全通过后只冻结一个 fragility-aware 固定探针 |
+| `ADAPTER-002` | AUTHORIZED_AFTER_STAGE_D | ADAPTER | 四模型站内全通过后，只能冻结一个 exposure-reducing unqualified veto shadow |
 
 阶段 B 冻结后的正式概率集合固定为：
 
@@ -485,14 +514,17 @@ FEATURE_CONDITIONAL_REQUIRED:
     front_inversion_5d
     mid_curve_pressure_accelerates_5d
     carry_environment_recovers_10d
-    calm_carry_breaks_5d
 
 BASE_RATE_ONLY_EXEMPT_FROM_MODEL_GATE:
     broad_stress_persists_10d
+
+FORMAL_MODEL_REJECTED_RETAINED_AS_EVIDENCE_ONLY:
+    calm_carry_breaks_5d
 ```
 
-这在验收计数上是五个条件概率模型加一个基准率参考。不得为形成“四加一”的口头计数而删除
-Carry、Fragility 或三个既有通过事件中的任何一个。
+这在验收计数上是四个条件概率模型加一个基准率参考。`calm_carry_breaks_5d` 的标签定义、唯一
+候选 hash 与失败证据留在审计文档中，但运行时事件、候选代码、配置、Schema 与 Dashboard 保持
+删除状态；不得把 adapter shadow 计作第五个模型或 `FRAGILITY_EVENT=PASS`。
 
 阶段 B 必须以纯文档提交冻结：
 
@@ -516,10 +548,11 @@ Carry、Fragility 或三个既有通过事件中的任何一个。
 1. `PROB-CAL-002`；
 2. `PROB-CARRY-002`；
 3. `PROB-CARRY-SATURATION-003`，仅在 v1.2 授权的一次受控修复中；
-4. `PROB-FRAGILITY-002`；
+4. `PROB-FRAGILITY-002` 的正式拒绝与运行表面清理（已完成，v1.3 保留）；
 5. `STATE-CHURN-002`，严格限于已接纳的 risk-on 编号；
 6. 必要的 output/Schema/narrative/Dashboard 兼容；
-7. 阶段 D 完整站内验收。
+7. 阶段 D 四模型完整站内验收；
+8. 只有阶段 D 通过后，按阶段 E 另行纯文档冻结 `ADAPTER-002`。
 
 每个 defect 一个提交：
 
@@ -655,17 +688,20 @@ published_probability = causal_base_rate
 Brier Skill、ECE 或 AUC 的 `FEATURE_CONDITIONAL` 模型门。不得把参考值标记为 calibrated model、
 不得把 base-rate reference 的完整性写成 Broad 模型 `PASS`，也不得继续搜索 direct-10D 特征。
 
-### 5.4 PROB-FRAGILITY-002
+### 5.4 PROB-FRAGILITY-002 正式拒绝与范围关闭
 
-只有阶段 A 样本、类门、事件独立性和分区方向全部通过时，才把
-`calm_carry_breaks_5d` 加入正式事件集合。predictor 集必须在阶段 B 一次冻结，并满足：
+v1.2 唯一候选已经按冻结标签、predictor、Logistic、rolling intercept、purge 与 publication 语义
+完成一次正式重建。它只有 114 条 outcome-available published OOF，故在计算 Brier/ECE 前即
+`NOT_ELIGIBLE`。v1.3 固定以下后果：
 
-- 仅含 prediction time 已知天气事实；
-- 优先复用现有 feature；
-- 最多新增 `d1_log_vvix`、`spx_5d_log_momentum`、一个因果 VVIX/VIX residual；
-- Tail/VRP 可作为 predictor，不能成为 `carry_answer` 硬门；
-- 不得从 ETF 结果筛选 predictor 或阈值；
-- 不通过完整概率门则从正式事件集合彻底拒绝，不留 Dashboard 半成品。
+- `calm_carry_breaks_5d` 不在正式事件集合，不再训练或发布正式模型；
+- 252/20/20、Skill≥2%、ECE≤7% 不变，不建立 calendar-span/100-row/utility 特批；
+- 已移除的 feature、配置、Schema、Dashboard 与 station runtime 路径不得为阶段 C/D 恢复；
+- 唯一候选的标签、predictor 顺序、模型公式、产物 hash 与不足样本裁决只作为审计证据保留；
+- `PROB-FRAGILITY-002=CLOSED_BY_SCOPE / FORMAL_REJECT_RETAINED` 关闭其 P1 station 阻断，
+  不是 `PASS`；
+- adapter 层是否复现同一候选的 unqualified score，只能在阶段 D 通过后由阶段 E 冻结，不能反向
+  改写气象站验收。
 
 ### 5.5 STATE-CHURN-002
 
@@ -726,7 +762,7 @@ STATE_TIMING
 PROBABILITY_INTEGRITY
 PROBABILITY_MODEL
 BASE_RATE_REFERENCE
-FRAGILITY_EVENT
+FRAGILITY_BOUNDARY
 ```
 
 ### 6.1 DATA/TENOR/STATE 回归门
@@ -764,9 +800,13 @@ ECE <= 7%
 同时必须报告 raw 与 published probability、reliability quintiles、AUC、年度分层和事件簇 block
 bootstrap。不得用 AUC 抵消 Brier/ECE，也不得用总体均值掩盖 rank reversal。
 
-V3 晋级要求 acute/front/mid/carry/fragility 五个 `FEATURE_CONDITIONAL_REQUIRED` 事件全部通过。
+V3 晋级要求 acute/front/mid/carry 四个 `FEATURE_CONDITIONAL_REQUIRED` 事件全部通过。
 Broad 是独立的 `BASE_RATE_ONLY` 参考，不计入模型通过率。任何必需条件模型
 `FAIL/INSUFFICIENT_EVIDENCE` 时，`PROBABILITY_MODEL=FAIL`，停止进入阶段 E。
+
+`FRAGILITY_BOUNDARY=PASS` 只在以下事实同时成立时通过：正式事件目录、运行 Schema、daily output、
+Dashboard、模型状态与模型通过计数中均不存在 `calm_carry_breaks_5d`；审计仍保留唯一候选 hash、
+114/252 样本失败和 `FORMAL_MODEL=NOT_ELIGIBLE`。它不表示 Fragility 事件或模型通过。
 
 这里的 `PASS` 只表示在因果 rolling-origin 历史账本上满足冻结研究门，不能恢复已经失去的 untouched
 确认资格；它只授权进入价格盲适配器冻结，不构成 production promotion。
@@ -793,9 +833,11 @@ Broad：
 必须同时满足：
 
 - DATA/TENOR/STATE_TIMING/PROBABILITY_INTEGRITY 全部 PASS；
-- acute/front/mid/carry/fragility 五个条件概率事件全部 PASS；
+- acute/front/mid/carry 四个条件概率事件全部 PASS；
 - Broad `BASE_RATE_REFERENCE=PASS` 且仅标记为 `BASE_RATE_ONLY`；
-- 没有未关闭 P0/P1 station defect；
+- `FRAGILITY_BOUNDARY=PASS`，且 `PROB-FRAGILITY-002` 只以
+  `CLOSED_BY_SCOPE / FORMAL_REJECT_RETAINED` 关闭；
+- 没有其他未关闭 P0/P1 station defect；
 - V3 语义、配置、Schema 和 package version 已冻结；
 - 站内验收提交完成且工作树干净。
 
@@ -808,7 +850,7 @@ Broad：
 阶段 E 仍不得读取价格。只允许更新本合同或 `MATVIX_V3_AUDIT.md` 的适配器规格，并以纯文档
 提交冻结后，才实现最小映射。
 
-### 7.1 固定事实谓词
+### 7.1 唯一 unqualified veto shadow
 
 V2 谓词保持：
 
@@ -820,25 +862,53 @@ BASE_SHORT_ALLOWED =
     AND persistence == NORMAL
 ```
 
-V3 只消费已通过的 fragility event，不把 predictor 本身变成硬门：
+阶段 E 的纯文档提交必须先把以下研究对象逐字冻结，之后才可写适配器代码。shadow 只复现
+`PROB-FRAGILITY-002` 唯一候选已经冻结并执行过的 weather-only 构造：
 
 ```text
-FRAGILITY_ELEVATED =
-    calm_carry_breaks_5d.event_status == ELIGIBLE
-    AND calm_carry_breaks_5d.model_status == CALIBRATED_MODEL
-    AND calm_carry_breaks_5d.probability_kind == FEATURE_CONDITIONAL
-    AND calm_carry_breaks_5d.probability > calm_carry_breaks_5d.base_rate
+label / eligibility / horizon / censoring = 审计第 11.1、12.5 节冻结版本
+predictor order =
+    p_neg_front_slope30
+    p_d1_log_vvix
+    p_d5_log_vvix
+    p_neg_spx_5d_log_momentum
+raw learner / training / purge = 同唯一候选
+score transform / causal base rate = 同唯一候选
+```
+
+复现值在 adapter ledger 中只能命名为：
+
+```text
+shadow_score_kind = UNQUALIFIED_RESEARCH_SCORE
+qualification_status = INSUFFICIENT_PUBLISHED_OOF
+formal_event_id = null
+formal_model_status = null
+```
+
+它不得写入正式 probability engine、daily event Schema、state/phase、weather narrative 或 Dashboard；
+不得称作 calibrated probability、model PASS、Fragility event 或第五个条件模型。
+
+唯一风险抬升与 Short 映射固定为：
+
+```text
+UNQUALIFIED_FRAGILITY_VETO_SHADOW =
+    BASE_SHORT_ALLOWED
+    AND shadow_score_available
+    AND shadow_score > causal_base_rate
 
 SHORT_ALLOWED_V3 =
     BASE_SHORT_ALLOWED
-    AND NOT FRAGILITY_ELEVATED
+    AND shadow_score_available
+    AND NOT UNQUALIFIED_FRAGILITY_VETO_SHADOW
 ```
 
-逐行 fragility probability 或 base rate 不可用时映射 SGOV；但如果该事件没有通过阶段 D，整个
-Short V3 probe 为 `NOT_ELIGIBLE`，不得以 BASE_RATE_ONLY 代替。
+这保证 shadow 只能把原本允许的 SVXY 行改为 SGOV，不能从 SGOV/VXZ 开启或增加 SVXY，且不能
+改变 Long。`BASE_SHORT_ALLOWED` 为真但 score/base rate 不可用时固定为 SGOV；不得用
+BASE_RATE_ONLY、acute 模型、确定性 VVIX/SKEW 红灯或 in-sample score 填补。
 
-禁止增加 Tail、THIN、VVIX、VRP 的第二组并列硬门，禁止概率阈值扫描。`probability > base_rate`
-是施工前冻结的唯一风险抬升判定。
+禁止增加 Tail、THIN、VVIX、VRP 的第二组并列硬门，禁止阈值扫描。`shadow_score > causal_base_rate`
+是候选结果和价格读取之前已经冻结的唯一风险抬升判定。若实现不能逐行复现唯一候选 hash 所代表的
+score/base-rate 语义，`ADAPTER-002=FAIL` 并停止，不得换第二种 mapping。
 
 ### 7.2 固定探针
 
@@ -888,18 +958,24 @@ outputs/v3_economic_probe/report.html
 weather version
 signal / decision_as_of / execution / return-through
 carry / shock / persistence
-fragility probability / base rate / model status / calibration method
-BASE_SHORT_ALLOWED / FRAGILITY_ELEVATED / target asset
+shadow score / causal base rate / score kind / qualification status / availability
+BASE_SHORT_ALLOWED / UNQUALIFIED_FRAGILITY_VETO_SHADOW / target asset
 price / turnover / cost / gross return / net return / P&L / NAV / drawdown
 ```
 
 ### 8.3 固定经济判定
 
+由于合格 shadow score 晚于 V2 经济窗口起点，主比较区间价格盲冻结为：从首个 V2 signal、
+shadow score 与 causal base rate 均可按冻结时点共同获得的 session 起，V2 与 V3 使用完全相同的
+sessions、价格、成本和执行时点。更早日期对两者都排除，不得把 score warm-up 映射为长期 SGOV
+来制造收益。旧全窗 V2 `$10,082.71 / +0.83% / -24.54% / -13.97%` 只作历史锚点，不与缩短后的
+共同区间直接比较。
+
 Short V3 只有同时满足才为 `POSITIVE`：
 
-- 税费后终值不低于 V2 的 `$10,082.71`，且总收益不低于 `+0.83%`；
-- 最大回撤严格优于 V2 的 `-24.54%`；
-- 最差滚动 20 日严格优于 V2 的 `-13.97%`；
+- 同一冻结共同区间内，税费后终值与总收益均严格高于 frozen V2 重放；
+- 最大回撤严格优于同区间 frozen V2；
+- 最差滚动 20 日严格优于同区间 frozen V2；
 - turnover/cost 完整归因，不能用 phase transition 代替实际资产切换；
 - 最差 20 个 SVXY 日的实际暴露逐日列出；
 - 改善不是价格缺失、延迟执行或成本变化造成。
@@ -910,7 +986,9 @@ Long V3 必须与 V2 映射和结果逐日一致，除非经已关闭 STATE defe
 Combined V3 必须终值、最大回撤和 Worst-20D 均不劣于 V2，且完整解释 Short 与 Long 贡献。
 
 任何一个 eligible probe 为 `MIXED/NEGATIVE`，综合历史结论均不得超过
-`NO_COMPREHENSIVE_INCREMENT`。不得改变适配器后重跑。
+`NO_COMPREHENSIVE_INCREMENT`；`ADAPTER-002` 随即按历史证伪拒绝，不得改变适配器后重跑。
+即使全部 `POSITIVE`，也只支持这个 exposure-reducing adapter shadow，不提升 Fragility 的正式
+概率资格或气象站模型数量。
 
 ### 8.4 污染边界与前向账本
 
@@ -926,7 +1004,7 @@ HISTORICAL_RESEARCH_SUPPORT
 
 - 起点是适配器冻结提交后的首个完整共同 session；
 - 不回填冻结提交之前的日期；
-- 每日只追加当时已知 signal、probability、position、price、cost 和 outcome；
+- 每日只追加当时已知 signal、unqualified shadow score、position、price、cost 和 outcome；
 - 不因前向结果修改已冻结阈值、事件或适配器；
 - 正式 promotion 所需观察长度和独立 stress/fragility 事件数必须由单独 power/evidence 合同预先
   冻结，初始 V3 施工不得事后决定；
@@ -966,18 +1044,26 @@ Skill/ECE 门，不豁免基准率发布完整性，也不预先保证 Carry、F
 bounded-duration 候选。该例外不授权任何其他第二候选；正式重建一旦失败，下列“第二次实现仍无法
 关闭同一 defect”停止条件立即生效。
 
+合同 v1.3 不解除或放宽 `PROB-FRAGILITY-002` 的 252 样本门。它保留唯一候选的正式拒绝，
+通过把 Fragility 从 station probability 产品范围移除来关闭该 P1，并只授权一个与正式站隔离、
+只减 Short 暴露的 `UNQUALIFIED_FRAGILITY_VETO_SHADOW`。该 shadow 只能接受阶段 F 的一次历史
+证伪；无论经济结果如何，都不得反向获得概率资格。
+
 以下情况必须停止：
 
 - V2 基线/hash/测试无法复现；
 - calibration 或 duration 诊断不能按 PIT 重放；
 - 需要 event-specific 算法、阈值扫描或大规模 feature search 才能通过；
 - Broad 被发布为 feature-conditional/calibrated model，或把基准率完整性冒充成模型增量 PASS；
-- Fragility event 样本、独立性或两窗方向不足；
+- 任何人把 Fragility shadow 表示为正式 event/probability/model/state/phase/Schema/Dashboard 字段；
+- 任何人降低 252 门、用日历跨度/100-row/ESS 叙事重开正式 Fragility，或恢复第二个候选；
+- 采用未冻结的 VVIX/SKEW 确定性红灯、acute 替代、阈值或第二组 veto mapping；
 - 需要新 option/OHLC 数据但没有独立授权合同；
 - risk-off timing 因 churn 修复而变慢；
 - 当前三个已通过概率事件发生退化；
 - 第二次实现仍无法关闭同一 defect；
 - 任何 P0/P1 station defect 未关闭；
+- `UNQUALIFIED_FRAGILITY_VETO_SHADOW` 能增加 Short 暴露、改变 Long，或不能逐行复现冻结候选语义；
 - 经济探针已运行一次后提出修改 mapping/threshold/cost/lag。
 
 ---
@@ -1016,13 +1102,14 @@ V3 后续提交边界：
 6. `audit(v3): confirm carry saturation residual`；
 7. `docs(v3): authorize bounded carry saturation repair`；
 8. `fix(PROB-CARRY-SATURATION-003): bound carry spell age`；
-9. `feat(PROB-FRAGILITY-002): publish calm carry break risk`；
-10. `fix(STATE-CHURN-002): remove confirmed risk-on micro churn`；
-11. `test(v3): complete weather-station self-acceptance`；
-12. `docs(v3): freeze fragility-aware economic adapter`；
-13. `feat(ADAPTER-002): implement frozen fragility adapter`；
-14. `test(v3): run frozen V2 versus V3 probes`；
-15. `docs(v3): record verdict and prospective boundary`。
+9. `audit(PROB-FRAGILITY-002): reject insufficient OOF candidate`；
+10. `docs(v3): authorize four-model station and unqualified veto shadow`；
+11. `fix(STATE-CHURN-002): remove confirmed risk-on micro churn`；
+12. `test(v3): complete four-model weather-station self-acceptance`；
+13. `docs(v3): freeze unqualified fragility veto adapter`；
+14. `feat(ADAPTER-002): implement frozen unqualified veto shadow`；
+15. `test(v3): run one frozen V2 versus V3 probe`；
+16. `docs(v3): record verdict and prospective boundary`。
 
 每个功能提交运行聚焦测试、正式历史/OOF 重建和完整站内回归。最终必须运行：
 
@@ -1049,10 +1136,10 @@ git status --short --branch
 1. 当前 Platt 为什么失败，V3 如何防止排序倒置和 warm-up 失真；
 2. Carry duration facts 是否提供稳定、直接的 OOF 增量；
 3. Broad 10D 是否严格保持 `BASE_RATE_ONLY`，且没有被冒充为条件模型通过；
-4. `calm_carry_breaks_5d` 是否被接纳并通过；
+4. `calm_carry_breaks_5d` 为什么被正式拒绝、如何证明它没有渗入气象站通过计数；
 5. micro-churn 是否存在、改了什么、有没有牺牲 risk-off timing；
-6. 五个必需条件模型、Broad 基准率参考和各自独立状态结论；
-7. V3 vs V2 固定探针是否实现 Short 帕累托改善；
+6. 四个必需条件模型、Broad 基准率参考和 Fragility boundary 的各自独立状态结论；
+7. 唯一 unqualified veto shadow 在同一冻结共同区间是否实现 Short 帕累托改善；
 8. 哪些结果只是污染历史支持，哪些仍需前向观察；
 9. 尚未验证、被拒绝或因数据权利延后的能力。
 
@@ -1072,11 +1159,10 @@ RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION
 相对 a2a8a58 只新增该文档后，创建 codex/matvix-v3。先冻结 V2 只读基线，再严格完成
 阶段 A 的 calibration、Carry hazard、Broad、calm-carry break、micro-churn 与数据可行性审计。
 阶段 A–D 不得读取 SVXY/SGOV/VXZ 价格或 v2_economic_probe 逐日文件，不得恢复隔离包，
-不得扫描阈值、模型、窗口或特征。只有 MATVIX_V3_AUDIT.md 缺陷台账和 V3 语义规格以纯文档
-提交冻结后，按 PROB-CAL-002 → PROB-CARRY-002 → PROB-CARRY-SATURATION-003 →
-PROB-FRAGILITY-002 → STATE-CHURN-002 的顺序分别施工；Saturation 只允许 cap=20 的替换式候选和
-一次正式重建，原模型门不变，失败即停止；Broad 只发布 `BASE_RATE_ONLY` 参考，不再施工 direct-10D
-条件模型。五个必需条件概率事件与 Broad 基准率完整性全部通过后，先价格盲冻结唯一适配器，
-才能运行一次历史经济诊断；
-历史结果只允许标记 HISTORICAL_RESEARCH_SUPPORT，不得晋升或推送。
+不得扫描阈值、模型、窗口或特征。v1.3 保留 `PROB-FRAGILITY-002` 的 114/252 正式失败并把它从
+气象站概率产品范围移除；不得降低样本门或恢复正式事件。继续按 `STATE-CHURN-002` → 四模型加
+Broad 基准率的阶段 D 验收施工。阶段 D 通过后，必须再用纯文档冻结唯一
+`UNQUALIFIED_FRAGILITY_VETO_SHADOW`，其冻结候选 score 只能把原 SVXY 决策改为 SGOV、不得进入
+正式 Schema/Dashboard/模型计数或影响 Long。适配器代码提交后才可运行一次同共同区间的历史经济
+诊断；不得修改 mapping 后重跑。历史结果最多标记 `HISTORICAL_RESEARCH_SUPPORT`，不得晋升或推送。
 ```
