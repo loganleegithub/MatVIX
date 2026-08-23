@@ -9,8 +9,8 @@
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
 > v1.3 修订提交：本次纯文档冻结提交（以 Git 历史为准）
-> 当前裁决：`STAGE_E=PURE_DOCUMENT_ADAPTER_SPEC_FROZEN / PRICE_BLIND_IMPLEMENTATION_AUTHORIZED`
-> 下一项：`ADAPTER-002 IMPLEMENT FROZEN UNQUALIFIED VETO SHADOW`
+> 当前裁决：`ADAPTER-002=PRICE_BLIND_IMPLEMENTATION_PASS / FROZEN FOR ONE STAGE_F PROBE`
+> 下一项：`STAGE_F RUN EXACTLY ONE FROZEN V2 VERSUS V3 ECONOMIC PROBE`
 > 最高允许结论：`HISTORICAL_RESEARCH_SUPPORT / RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION`
 
 ---
@@ -459,12 +459,13 @@ change 未触发交易；本审计没有打开价格账本，也没有计算逐�
 - minimal repair：先完成 `STATE-CHURN-002` 与四模型阶段 D，再纯文档冻结唯一 shadow mapping。
 - rejected alternatives：Fragility BASE_RATE_ONLY、正式概率特批、Tail/VVIX/VRP 第二硬门、确定性红灯、
   acute 替代、阈值扫描、提前读取价格。
-- affected existing files：无。
-- semantic/version impact：无适配器规格冻结、无代码、无版本变化。
+- affected existing files：`fragility_shadow.py`、`economic_probe.py`、`cli.py`、通用 OOF feature override、
+  acceptance 拒绝证据 hash 与聚焦测试；正式事件、Schema、state、Dashboard 无变化。
+- semantic/version impact：adapter spec `1.0.0`；正式 feature/state/probability/package version 不变。
 - station acceptance criterion：合同第 6.5 节四模型、Broad reference 与 Fragility boundary 全部满足，
   且站内验收提交后工作树干净。
 - economic relevance：阶段 F 只可运行一次；成功最多 `HISTORICAL_RESEARCH_SUPPORT`，失败即拒绝。
-- status：`STAGE_E_SPEC_FROZEN / PRICE_BLIND_IMPLEMENTATION_AUTHORIZED`
+- status：`PRICE_BLIND_IMPLEMENTATION_PASS / STAGE_F_ONE_RUN_NEXT`
 
 ### 9.8 `PROB-CARRY-SATURATION-003`
 
@@ -1580,6 +1581,64 @@ FORMAL_STATION_SURFACE=UNCHANGED_FOUR_MODELS_PLUS_ONE_BASE_RATE_REFERENCE
 PRODUCT_PRICES_READ=FALSE
 ADAPTER_CODE=NEXT_AUTHORIZED
 ECONOMIC_PROBE=NOT_RUN
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+### 15.5 `ADAPTER-002` 价格盲实现与复现证据
+
+阶段 E 文档提交 `424667c` 与 hash 勘误提交 `c70f9f2` 完成且工作树干净后，才新增隔离模块
+`src/matvix/fragility_shadow.py`、固定 V2/V3 comparison path 与聚焦测试。实现没有把候选加入
+`EVENT_ORDER`、`LOGISTIC_FEATURES`、target/OOF cache、state、daily Schema、snapshot 或 Dashboard；
+正式验收常量只把 62 位转录错误同步为已经价格盲证明的 64 位拒绝证据 hash。
+
+锁定运行时的完整价格盲 replay 逐项命中：
+
+```text
+eligible_targets=372
+completed_targets=371
+target_positive/negative=158/213
+published_oof=115
+completed_published_oof=114
+completed_oof_positive/negative=44/70
+first_score_session=2023-06-16
+formal_oof_sha256=330476772918f52d1d588577ea337bd7b6ed596a3049294716e3c14dfa34f820
+candidate_target_sha256=9e77c5be6e2f4a2b387d877b7f5184376f922301a2585077f0704382a920523e
+candidate_oof_sha256=44e7e43efb207b8b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770
+```
+
+115 个 score rows 在唯一映射下分为 43 个 `UNQUALIFIED_FRAGILITY_VETO_SHADOW=true` 与 72 个
+`SHORT_ALLOWED_V3=true`；全历史 372 个 `BASE_SHORT_ALLOWED` 中，首个 score 以前的 257 行不被
+填补或冒充为 score。阶段 F 会把双方共同区间裁到 2023-06-16 以后；共同起点后任一缺分数行仍固定
+SGOV。实现逐行断言 V3 Short 不能在 frozen V2 `BASE_SHORT_ALLOWED=false` 时为真；Long 决策完全
+绕过 shadow，并在经济裁决中使用核心逐日字段 exact-equality gate。
+
+提交前完整价格盲回归结果：全量 pytest、Ruff、Mypy、doctor 通过；history 仍为 3,334 行、
+`OK/PARTIAL=2,803/531`；正式全 OOF 重建与阶段 D 七维再验收全部 PASS。正式产物未漂移：
+
+```text
+states.parquet                         8a31d30124b616d073ff780363dbef6705a5aa6a7500e6c0569783e16ad2d7b4
+target_ledger.parquet                  fb91968643c2b65fa28f72fa77ca485cb4db934c1e59d20fb554cf2d00939913
+oof_ledger.parquet                     330476772918f52d1d588577ea337bd7b6ed596a3049294716e3c14dfa34f820
+artifact_contract.json                 533111ad28b43b41fa16c604bb4d6e098e5199805eccf7d09895ada0487c7a93
+v3_station_acceptance/daily            24de7e129cf2349bc18bc3aef697986af4c77184ea017c7dc2ad9423b049a7ef
+v3_station_acceptance/summary          54b4c4dd73c4f3f380e90981015b3499bd6a67fe4328c08f44bc97e7e93eba93
+v3_station_acceptance/report           10b1c08a6a547c85864a7319ccfe977aa2e42a0842479eb1c27ecd8b79a35fcd
+```
+
+相对 V2 基线的非生成 Python 与测试净新增为 1,499 行，不超过 1,500 行预算；没有新增依赖、模型
+registry、renderer、数据源或参数搜索器。正式 V3 economic outputs 三个路径均不存在，且截至本提交
+仍未读取冻结价格 manifest、原始价格 JSON 或 V2 逐日/报告内容。
+
+```text
+ADAPTER-002=PASS_PRICE_BLIND_IMPLEMENTATION
+ADAPTER_SPEC_SHA256=891ff32abe61235f7297684ae7bc4576f470312950782773761aa25da4ca8aa8
+FORMAL_STATION_SURFACE=UNCHANGED
+PROB-FRAGILITY-002=FORMAL_REJECT_RETAINED_114_OF_252
+STAGE_D=SEVEN_DIMENSION_PASS_REPLAYED
+PRODUCT_PRICES_READ=FALSE
+STAGE_F=NEXT_AUTHORIZED_EXACTLY_ONE_RUN
 NO_MERGE
 NO_PUSH
 NO_PRODUCTION_PROMOTION

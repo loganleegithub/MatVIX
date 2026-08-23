@@ -16,6 +16,12 @@ import requests
 from plotly.subplots import make_subplots
 
 from matvix.calendar import decision_as_of
+from matvix.fragility_shadow import (
+    SPEC_ID,
+    SPEC_SHA256,
+    build_v3_adapter,
+    verify_frozen_replay,
+)
 from matvix.storage import write_json
 
 TICKERS = ("SVXY", "SGOV", "VXZ")
@@ -23,6 +29,12 @@ PROBES = ("short", "long", "combined")
 INITIAL_NAV = 10_000.0
 ONE_WAY_COST = 0.0005
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+V3_STAGE_D_SHA256 = "54b4c4dd73c4f3f380e90981015b3499bd6a67fe4328c08f44bc97e7e93eba93"
+SHADOW_LEDGER_FIELDS = (
+    "base_short_allowed", "shadow_score", "causal_base_rate", "shadow_score_available",
+    "shadow_score_kind", "qualification_status", "formal_event_id", "formal_model_status",
+    "shadow_transform", "unqualified_fragility_veto_shadow", "short_allowed_v3",
+)
 
 
 def adapt_weather(states: pd.DataFrame, weather_version: str) -> pd.DataFrame:
@@ -43,6 +55,10 @@ def adapt_weather(states: pd.DataFrame, weather_version: str) -> pd.DataFrame:
         raise ValueError("Weather interface requires one valid row per session")
     result["decision_as_of"] = result["session_date"].map(decision_as_of)
     result["weather_version"] = weather_version
+    result["base_short_allowed"] = (
+        result["data_status"].eq("OK") & result["carry"].eq("SUPPORTIVE")
+        & result["shock"].eq("CALM") & result["persistence"].eq("NORMAL")
+    )
     return result.sort_values("session_date").reset_index(drop=True)
 
 
@@ -50,15 +66,19 @@ def target_asset(row: pd.Series, probe: str) -> tuple[str, str]:
     if probe not in PROBES:
         raise ValueError(f"Unknown frozen probe: {probe}")
     usable = row.get("data_status") == "OK"
-    short_allowed = bool(
-        usable
-        and row.get("carry") == "SUPPORTIVE"
-        and row.get("shock") == "CALM"
-        and row.get("persistence") == "NORMAL"
-    )
+    base_short_allowed = bool(row.get("base_short_allowed", False))
+    is_v3 = row.get("weather_version") == "V3"
+    short_allowed = bool(row.get("short_allowed_v3", False)) if is_v3 else base_short_allowed
     mid_diffusion = bool(usable and row.get("persistence") == "DIFFUSING")
+    defensive = (
+        "UNQUALIFIED_FRAGILITY_VETO_SHADOW"
+        if is_v3 and bool(row.get("unqualified_fragility_veto_shadow", False))
+        else "SHADOW_SCORE_UNAVAILABLE"
+        if is_v3 and base_short_allowed and not bool(row.get("shadow_score_available", False))
+        else "DEFENSIVE"
+    )
     if probe == "short":
-        return ("SHORT_ALLOWED", "SVXY") if short_allowed else ("DEFENSIVE", "SGOV")
+        return ("SHORT_ALLOWED", "SVXY") if short_allowed else (defensive, "SGOV")
     if probe == "long":
         return (
             ("MID_DIFFUSION_CONFIRMED", "VXZ")
@@ -71,7 +91,7 @@ def target_asset(row: pd.Series, probe: str) -> tuple[str, str]:
         return "MID_DIFFUSION_CONFIRMED", "VXZ"
     if short_allowed:
         return "SHORT_ALLOWED", "SVXY"
-    return "DEFENSIVE", "SGOV"
+    return defensive, "SGOV"
 
 
 def parse_yahoo_chart(payload: dict[str, Any], ticker: str) -> pd.DataFrame:
@@ -192,6 +212,7 @@ def build_probe_ledger(
                 "carry": str(signal["carry"]),
                 "shock": str(signal["shock"]),
                 "persistence": str(signal["persistence"]),
+                **{field: signal.get(field) for field in SHADOW_LEDGER_FIELDS},
                 "probe_state": probe_state,
                 "target_asset": asset,
                 "adjusted_execution_price": execution_price,
@@ -464,57 +485,84 @@ def _worst_svxy_exposure(
 
 
 def _daily_attribution(
-    ledger: pd.DataFrame, classifications: dict[str, str]
+    ledger: pd.DataFrame, classifications: dict[str, str], versions: tuple[str, str]
 ) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
     for probe, classification in classifications.items():
         if classification not in {"MIXED", "NEGATIVE"}:
             continue
-        v1 = ledger.loc[
-            ledger["weather_version"].eq("V1") & ledger["probe"].eq(probe)
-        ].set_index("execution_session")
-        v2 = ledger.loc[
-            ledger["weather_version"].eq("V2") & ledger["probe"].eq(probe)
-        ].set_index("execution_session")
-        joined = v1.add_prefix("v1_").join(v2.add_prefix("v2_"), how="inner")
-        joined["nav_gap"] = joined["v2_nav"] - joined["v1_nav"]
+        baseline = ledger.loc[ledger["weather_version"].eq(versions[0])
+                              & ledger["probe"].eq(probe)].set_index("execution_session")
+        candidate = ledger.loc[ledger["weather_version"].eq(versions[1])
+                               & ledger["probe"].eq(probe)].set_index("execution_session")
+        joined = baseline.add_prefix("baseline_").join(
+            candidate.add_prefix("candidate_"), how="inner"
+        )
+        joined["nav_gap"] = joined["candidate_nav"] - joined["baseline_nav"]
         joined["nav_gap_change"] = joined["nav_gap"].diff().fillna(joined["nav_gap"])
-        records = []
+        records, numeric = [], ("gross_return", "cost", "net_return", "nav")
         for session, row in joined.iterrows():
-            records.append(
-                {
-                    "execution_session": pd.Timestamp(session).date().isoformat(),
-                    "v1_asset": row["v1_target_asset"],
-                    "v2_asset": row["v2_target_asset"],
-                    "v1_gross_return": float(row["v1_gross_return"]),
-                    "v2_gross_return": float(row["v2_gross_return"]),
-                    "v1_cost": float(row["v1_cost"]),
-                    "v2_cost": float(row["v2_cost"]),
-                    "v1_net_return": float(row["v1_net_return"]),
-                    "v2_net_return": float(row["v2_net_return"]),
-                    "v1_nav": float(row["v1_nav"]),
-                    "v2_nav": float(row["v2_nav"]),
-                    "nav_gap": float(row["nav_gap"]),
-                    "nav_gap_change": float(row["nav_gap_change"]),
-                }
-            )
+            records.append({
+                "execution_session": pd.Timestamp(session).date().isoformat(),
+                "baseline_asset": row["baseline_target_asset"],
+                "candidate_asset": row["candidate_target_asset"],
+                **{f"baseline_{name}": float(row[f"baseline_{name}"]) for name in numeric},
+                **{f"candidate_{name}": float(row[f"candidate_{name}"]) for name in numeric},
+                "nav_gap": float(row["nav_gap"]), "nav_gap_change": float(row["nav_gap_change"]),
+            })
         result[probe] = records
     return result
 
 
-def build_economic_probe(
+def _v3_classifications(
+    metrics: dict[str, dict[str, dict[str, Any]]],
+    ledger: pd.DataFrame,
+    versions: tuple[str, str],
+) -> tuple[dict[str, str], dict[str, bool]]:
+    baseline, candidate = (metrics[version] for version in versions)
+    short_gates = {
+        "final_nav_strictly_higher": candidate["short"]["final_nav"] > baseline["short"]["final_nav"],
+        "total_return_strictly_higher": candidate["short"]["total_return"] > baseline["short"]["total_return"],
+        "max_drawdown_strictly_better": candidate["short"]["max_drawdown"] > baseline["short"]["max_drawdown"],
+        "worst_20d_strictly_better": candidate["short"]["worst_rolling_20d"] > baseline["short"]["worst_rolling_20d"],
+    }
+    combined_gates = {
+        "combined_final_nav_nonworse": candidate["combined"]["final_nav"] >= baseline["combined"]["final_nav"],
+        "combined_max_drawdown_nonworse": candidate["combined"]["max_drawdown"] >= baseline["combined"]["max_drawdown"],
+        "combined_worst_20d_nonworse": candidate["combined"]["worst_rolling_20d"] >= baseline["combined"]["worst_rolling_20d"],
+    }
+    exact_fields = ("signal_session", "decision_as_of", "execution_session", "return_through_session",
+                    "data_status", "persistence", "probe_state", "target_asset",
+                    "adjusted_execution_price", "adjusted_return_price", "turnover", "cost",
+                    "gross_return", "gross_pnl", "net_return", "pnl", "nav", "drawdown")
+    long_rows = [ledger.loc[
+        ledger["weather_version"].eq(version) & ledger["probe"].eq("long"), exact_fields
+    ].reset_index(drop=True) for version in versions]
+    gates = {**short_gates, "long_daily_exact": long_rows[0].equals(long_rows[1]), **combined_gates}
+    return {
+        "short": "POSITIVE" if all(short_gates.values()) else "MIXED",
+        "long": "POSITIVE" if gates["long_daily_exact"] else "NEGATIVE",
+        "combined": "POSITIVE" if all(combined_gates.values()) else "MIXED",
+    }, gates
+
+
+def _build_economic_comparison(
     *,
-    v1_states: pd.DataFrame,
-    v2_states: pd.DataFrame,
+    weather: dict[str, pd.DataFrame],
     prices: pd.DataFrame,
     source_manifest: dict[str, Any],
     station_summary: dict[str, Any],
+    v3_contract: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     dimensions = cast(dict[str, Any], station_summary.get("dimensions", {}))
-    required_dimensions = ("DATA", "TENOR", "STATE_TIMING", "PROBABILITY_INTEGRITY")
+    required_dimensions = tuple(station_summary.get("dimension_order", ())) if v3_contract else (
+        "DATA", "TENOR", "STATE_TIMING", "PROBABILITY_INTEGRITY"
+    )
     if any(cast(dict[str, Any], dimensions.get(name, {})).get("status") != "PASS" for name in required_dimensions):
         raise ValueError("Economic probe is blocked by a non-PASS station dimension")
-    weather = {"V1": adapt_weather(v1_states, "V1"), "V2": adapt_weather(v2_states, "V2")}
+    versions = tuple(weather)
+    if len(versions) != 2:
+        raise ValueError("Economic comparison requires exactly two weather versions")
     prices = prices.copy()
     prices["session_date"] = pd.to_datetime(prices["session_date"]).dt.normalize()
     common = _common_sessions(weather, prices)
@@ -531,7 +579,7 @@ def build_economic_probe(
 
     ledgers = [
         build_probe_ledger(weather[version], common_prices, probe=probe)
-        for version in ("V1", "V2")
+        for version in versions
         for probe in PROBES
     ]
     ledger = pd.concat(ledgers, ignore_index=True)
@@ -547,25 +595,31 @@ def build_economic_probe(
             )
             for probe in PROBES
         }
-        for version in ("V1", "V2")
+        for version in versions
     }
     clusters = _diffusion_cluster_returns(weather, common_prices, common)
     diffusion_counts = {
         version: sum(record["weather_version"] == version for record in clusters)
-        for version in ("V1", "V2")
+        for version in versions
     }
     eligible = {
         "short": True,
         "long": all(count > 0 for count in diffusion_counts.values()),
         "combined": True,
     }
-    classifications = {
-        probe: classify_probe(metrics["V1"][probe], metrics["V2"][probe], eligible=eligible[probe])
-        for probe in PROBES
-    }
+    if v3_contract:
+        classifications, frozen_gates = _v3_classifications(metrics, ledger, versions)
+    else:
+        classifications = {
+            probe: classify_probe(
+                metrics[versions[0]][probe], metrics[versions[1]][probe], eligible=eligible[probe]
+            ) for probe in PROBES
+        }
+        frozen_gates = {}
     worst_exposure = _worst_svxy_exposure(ledger, common_prices, common)
     report = {
-        "probe_version": "1.0.0",
+        "probe_version": "3.0.0" if v3_contract else "1.0.0",
+        "comparison_versions": list(versions),
         "contract": {
             "initial_nav_usd": INITIAL_NAV,
             "assets": list(TICKERS),
@@ -578,6 +632,7 @@ def build_economic_probe(
                 "carry",
                 "shock",
                 "persistence",
+                *(SHADOW_LEDGER_FIELDS if v3_contract else ()),
             ],
             "parameters_tuned_after_results": False,
         },
@@ -591,6 +646,7 @@ def build_economic_probe(
         "metrics": metrics,
         "eligibility": eligible,
         "classifications": classifications,
+        "frozen_v3_gates": frozen_gates,
         "comprehensive_verdict": (
             "COMPREHENSIVE_POSITIVE"
             if all(value == "POSITIVE" for value in classifications.values() if value != "NOT_ELIGIBLE")
@@ -599,12 +655,15 @@ def build_economic_probe(
         "worst_20_svxy_day_exposure": worst_exposure,
         "diffusing_cluster_vxz_vs_sgov": clusters,
         "diffusing_cluster_counts": diffusion_counts,
-        "daily_attribution_for_nonpositive_probes": _daily_attribution(ledger, classifications),
+        "daily_attribution_for_nonpositive_probes": _daily_attribution(
+            ledger, classifications, versions
+        ),
         "evidence_boundary": {
             "fixed_probe_only": True,
             "not_strategy_optimization": True,
             "not_production_performance": True,
-            "station_probability_model_not_used": True,
+            "formal_station_probability_model_not_used": True,
+            "unqualified_fragility_shadow_used": v3_contract,
         },
     }
     return ledger.sort_values(["weather_version", "probe", "execution_session"]).reset_index(
@@ -612,9 +671,20 @@ def build_economic_probe(
     ), report
 
 
+def build_economic_probe(
+    *, v1_states: pd.DataFrame, v2_states: pd.DataFrame, prices: pd.DataFrame,
+    source_manifest: dict[str, Any], station_summary: dict[str, Any],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    return _build_economic_comparison(
+        weather={"V1": adapt_weather(v1_states, "V1"), "V2": adapt_weather(v2_states, "V2")},
+        prices=prices, source_manifest=source_manifest, station_summary=station_summary,
+    )
+
+
 def _economic_figures(
     ledger: pd.DataFrame, report: dict[str, Any]
 ) -> list[tuple[str, go.Figure]]:
+    versions = tuple(cast(list[str], report["comparison_versions"]))
     colors = {
         ("V1", "short"): "#8c8c8c",
         ("V2", "short"): "#f59e0b",
@@ -622,46 +692,29 @@ def _economic_figures(
         ("V2", "long"): "#0ea5e9",
         ("V1", "combined"): "#a78bfa",
         ("V2", "combined"): "#10b981",
+        ("V3", "short"): "#f97316",
+        ("V3", "long"): "#38bdf8",
+        ("V3", "combined"): "#22c55e",
     }
-    nav = go.Figure()
-    underwater = go.Figure()
-    rolling = go.Figure()
-    for version in ("V1", "V2"):
+    nav, underwater, rolling = go.Figure(), go.Figure(), go.Figure()
+    series_figures = {
+        "nav": (nav, "USD NAV"), "drawdown": (underwater, "Drawdown"),
+        "rolling_20d_return": (rolling, "Rolling 20-session return"),
+    }
+    for version in versions:
         for probe in PROBES:
-            frame = ledger.loc[
-                ledger["weather_version"].eq(version) & ledger["probe"].eq(probe)
-            ]
+            frame = ledger.loc[ledger["weather_version"].eq(version) & ledger["probe"].eq(probe)]
             name = f"{version} {probe}"
-            nav.add_trace(
-                go.Scatter(
-                    x=frame["return_through_session"],
-                    y=frame["nav"],
-                    name=name,
+            for column, (figure, _) in series_figures.items():
+                figure.add_trace(go.Scatter(
+                    x=frame["return_through_session"], y=frame[column], name=name,
                     line={"color": colors[(version, probe)]},
-                )
-            )
-            underwater.add_trace(
-                go.Scatter(
-                    x=frame["return_through_session"],
-                    y=frame["drawdown"],
-                    name=name,
-                    line={"color": colors[(version, probe)]},
-                )
-            )
-            rolling.add_trace(
-                go.Scatter(
-                    x=frame["return_through_session"],
-                    y=frame["rolling_20d_return"],
-                    name=name,
-                    line={"color": colors[(version, probe)]},
-                )
-            )
-    nav.update_layout(yaxis_title="USD NAV", hovermode="x unified")
-    underwater.update_layout(yaxis_title="Drawdown", hovermode="x unified")
-    rolling.update_layout(yaxis_title="Rolling 20-session return", hovermode="x unified")
+                ))
+    for figure, title in series_figures.values():
+        figure.update_layout(yaxis_title=title, hovermode="x unified")
 
     worst = cast(list[dict[str, Any]], report["worst_20_svxy_day_exposure"])
-    exposure_rows = [f"{version} {probe}" for version in ("V1", "V2") for probe in PROBES]
+    exposure_rows = [f"{version} {probe}" for version in versions for probe in PROBES]
     asset_code = {"SGOV": 0, "SVXY": 1, "VXZ": 2}
     exposure = go.Figure(
         go.Heatmap(
@@ -696,7 +749,6 @@ def _economic_figures(
 
     combined = ledger.loc[ledger["probe"].eq("combined")].copy()
     timeline = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08)
-    versions = ("V1", "V2")
     timeline_frames = {
         version: combined.loc[combined["weather_version"].eq(version)].sort_values(
             "execution_session"
@@ -704,14 +756,14 @@ def _economic_figures(
         for version in versions
     }
     timeline_x = [
-        str(value) for value in timeline_frames["V1"]["execution_session"].tolist()
+        str(value) for value in timeline_frames[versions[0]]["execution_session"].tolist()
     ]
     for version in versions[1:]:
         candidate_x = [
             str(value) for value in timeline_frames[version]["execution_session"].tolist()
         ]
         if candidate_x != timeline_x:
-            raise ValueError("V1/V2 combined timelines do not share execution sessions")
+            raise ValueError("Economic comparison timelines do not share execution sessions")
     timeline.add_trace(
         go.Heatmap(
             x=timeline_x,
@@ -780,43 +832,34 @@ def _economic_figures(
     costs = make_subplots(
         rows=2,
         cols=3,
-        subplot_titles=[f"{version} {probe}" for version in ("V1", "V2") for probe in PROBES],
+        subplot_titles=[f"{version} {probe}" for version in versions for probe in PROBES],
     )
     for index, (version, probe) in enumerate(
-        (version, probe) for version in ("V1", "V2") for probe in PROBES
+        (version, probe) for version in versions for probe in PROBES
     ):
         values = metrics[version][probe]
-        initial = float(values["initial_nav"])
-        gross = float(values["gross_final_nav"])
-        final = float(values["final_nav"])
-        costs.add_trace(
-            go.Waterfall(
-                x=["Initial", "Gross P&L", "Cost drag", "Final"],
-                y=[initial, gross - initial, final - gross, final],
-                measure=["absolute", "relative", "relative", "total"],
-                name=f"{version} {probe}",
-                showlegend=False,
-            ),
-            row=index // 3 + 1,
-            col=index % 3 + 1,
+        initial, gross, final = map(float, (
+            values["initial_nav"], values["gross_final_nav"], values["final_nav"]
+        ))
+        trace = go.Waterfall(
+            x=["Initial", "Gross P&L", "Cost drag", "Final"],
+            y=[initial, gross - initial, final - gross, final],
+            measure=["absolute", "relative", "relative", "total"],
+            name=f"{version} {probe}", showlegend=False,
         )
+        costs.add_trace(trace, row=index // 3 + 1, col=index % 3 + 1)
 
     clusters = cast(list[dict[str, Any]], report["diffusing_cluster_vxz_vs_sgov"])
     cluster_figure = go.Figure()
-    for version in ("V1", "V2"):
+    for version in versions:
         records = [record for record in clusters if record["weather_version"] == version]
-        cluster_figure.add_trace(
-            go.Bar(
-                x=[f"{record['signal_start']} #{record['cluster_id']}" for record in records],
-                y=[record["vxz_minus_sgov"] for record in records],
-                name=version,
-            )
-        )
-    cluster_figure.update_layout(
-        barmode="group", yaxis_title="VXZ return minus SGOV return"
-    )
+        cluster_figure.add_trace(go.Bar(
+            x=[f"{record['signal_start']} #{record['cluster_id']}" for record in records],
+            y=[record["vxz_minus_sgov"] for record in records], name=version,
+        ))
+    cluster_figure.update_layout(barmode="group", yaxis_title="VXZ return minus SGOV return")
     return [
-        ("V1/V2 三个固定探针净值", nav),
+        (f"{'/'.join(versions)} 三个固定探针净值", nav),
         ("Underwater 回撤", underwater),
         ("滚动 20-session 收益", rolling),
         ("最差 20 个 SVXY 日的实际资产暴露", exposure),
@@ -827,11 +870,12 @@ def _economic_figures(
 
 
 def _economic_report_html(ledger: pd.DataFrame, report: dict[str, Any]) -> str:
+    versions = tuple(cast(list[str], report["comparison_versions"]))
     metrics = cast(dict[str, dict[str, dict[str, Any]]], report["metrics"])
     classifications = cast(dict[str, str], report["classifications"])
     metric_rows = []
     for probe in PROBES:
-        for version in ("V1", "V2"):
+        for version in versions:
             values = metrics[version][probe]
             metric_rows.append(
                 "<tr>"
@@ -861,9 +905,9 @@ def _economic_report_html(ledger: pd.DataFrame, report: dict[str, Any]) -> str:
     source = cast(dict[str, Any], report["price_source"])
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MatVIX V2 Frozen Economic Probe</title>
+<title>MatVIX {'/'.join(versions)} Frozen Economic Probe</title>
 <style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#0b1220;color:#e5e7eb}}main{{max-width:1500px;margin:auto;padding:28px}}section{{background:#111827;border:1px solid #334155;border-radius:14px;margin:18px 0;padding:18px}}h1,h2{{color:#f8fafc}}code{{color:#fbbf24}}table{{border-collapse:collapse;width:100%}}th,td{{padding:8px;border-bottom:1px solid #334155;text-align:right}}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){{text-align:left}}.boundary{{color:#fca5a5}}</style></head>
-<body><main><h1>MatVIX V2 冻结经济探针</h1>
+<body><main><h1>MatVIX {'/'.join(versions)} 冻结经济探针</h1>
 <p class="boundary">固定研究探针，不是策略优化、生产绩效或交易许可。</p>
 <section><h2>独立判定</h2><ul>{verdict_rows}</ul><p>综合结论：<code>{report['comprehensive_verdict']}</code></p></section>
 <section><h2>审计指标</h2><table><thead><tr><th>版本</th><th>探针</th><th>终值</th><th>总收益</th><th>最大回撤</th><th>最差20日</th><th>切换</th><th>Turnover</th><th>成本</th></tr></thead><tbody>{''.join(metric_rows)}</tbody></table></section>
@@ -873,17 +917,76 @@ def _economic_report_html(ledger: pd.DataFrame, report: dict[str, Any]) -> str:
 
 
 def write_economic_probe_outputs(
-    ledger: pd.DataFrame, report: dict[str, Any], project_root: str | Path
+    ledger: pd.DataFrame, report: dict[str, Any], project_root: str | Path,
+    *, output_version: str = "v2", refuse_existing: bool = False,
 ) -> dict[str, Path]:
-    output_dir = Path(project_root).resolve() / "outputs" / "v2_economic_probe"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(project_root).resolve() / "outputs" / f"{output_version}_economic_probe"
     ledger_path = output_dir / "daily_ledger.csv"
     report_path = output_dir / "report.json"
     html_path = output_dir / "report.html"
+    if refuse_existing and any(path.exists() for path in (ledger_path, report_path, html_path)):
+        raise FileExistsError("Frozen V3 economic probe output already exists; rerun forbidden")
+    output_dir.mkdir(parents=True, exist_ok=True)
     _atomic_text(ledger.to_csv(index=False, date_format="%Y-%m-%dT%H:%M:%S%z"), ledger_path)
     write_json(report, report_path)
     _atomic_text(_economic_report_html(ledger, report), html_path)
     return {"ledger": ledger_path, "report": report_path, "html": html_path}
+
+
+def build_v3_economic_probe(
+    *, v2_states: pd.DataFrame, v3_states: pd.DataFrame, shadow_oof: pd.DataFrame,
+    prices: pd.DataFrame, source_manifest: dict[str, Any], station_summary: dict[str, Any],
+    replay_evidence: dict[str, Any],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    start = pd.Timestamp("2023-06-16")
+    weather = {"V2": adapt_weather(v2_states, "V2"),
+               "V3": build_v3_adapter(v3_states, shadow_oof)}
+    weather = {name: frame.loc[frame["session_date"].ge(start)].copy() for name, frame in weather.items()}
+    aligned = weather["V2"][["session_date", "base_short_allowed"]].merge(
+        weather["V3"][["session_date", "short_allowed_v3"]], on="session_date", how="inner"
+    )
+    if (aligned["short_allowed_v3"] & ~aligned["base_short_allowed"]).any():
+        raise ValueError("V3 shadow would add Short exposure relative to frozen V2")
+    ledger, report = _build_economic_comparison(
+        weather=weather, prices=prices, source_manifest=source_manifest,
+        station_summary=station_summary, v3_contract=True,
+    )
+    report.update({"adapter_spec_id": SPEC_ID, "adapter_spec_sha256": SPEC_SHA256,
+        "fragility_replay_evidence": replay_evidence,
+        "historical_evidence_class": (
+            "HISTORICAL_RESEARCH_SUPPORT"
+            if report["comprehensive_verdict"] == "COMPREHENSIVE_POSITIVE"
+            else "NO_COMPREHENSIVE_INCREMENT"
+        ),
+        "production_promotion": False})
+    return ledger, report
+
+
+def run_frozen_v3_economic_probe(
+    *, project_root: str | Path, v2_states: pd.DataFrame, v3_states: pd.DataFrame,
+    station_summary: dict[str, Any],
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    root = Path(project_root).resolve()
+    output_dir = root / "outputs" / "v3_economic_probe"
+    if any((output_dir / name).exists() for name in ("daily_ledger.csv", "report.json", "report.html")):
+        raise FileExistsError("Frozen V3 economic probe output already exists; rerun forbidden")
+    station_path = root / "outputs" / "v3_station_acceptance" / "summary.json"
+    if hashlib.sha256(station_path.read_bytes()).hexdigest() != V3_STAGE_D_SHA256:
+        raise ValueError("V3 Stage-D summary digest differs from the frozen adapter contract")
+    if station_summary.get("economic_probe_entry", {}).get("status") != "PASS":
+        raise ValueError("V3 economic probe is blocked by Stage-D entry")
+    shadow_oof, replay = verify_frozen_replay(v3_states)
+    manifest_path = root / "data" / "raw" / "economic_probe" / "20260822T093334.462165Z" / "manifest.json"
+    prices, source_manifest = _load_price_batch(manifest_path, root)
+    source_manifest["frozen_manifest_path"] = str(manifest_path.relative_to(root))
+    ledger, report = build_v3_economic_probe(
+        v2_states=v2_states, v3_states=v3_states, shadow_oof=shadow_oof,
+        prices=prices, source_manifest=source_manifest, station_summary=station_summary,
+        replay_evidence=replay,
+    )
+    outputs = write_economic_probe_outputs(
+        ledger, report, root, output_version="v3", refuse_existing=True)
+    return outputs, report
 
 
 def run_frozen_economic_probe(

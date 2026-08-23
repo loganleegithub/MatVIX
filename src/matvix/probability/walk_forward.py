@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
 from typing import Any
@@ -79,9 +80,13 @@ def _completed_before(
 
 
 def _fit_model(
-    training: pd.DataFrame, event: str, spec: ProbabilitySpec
+    training: pd.DataFrame,
+    event: str,
+    spec: ProbabilitySpec,
+    *,
+    feature_names: Sequence[str] | None = None,
 ) -> tuple[LogisticRegression | None, dict[str, Any]]:
-    features = LOGISTIC_FEATURES[event]
+    features = list(LOGISTIC_FEATURES[event] if feature_names is None else feature_names)
     sample = training.dropna(subset=[*features, "label"]).tail(spec.training_max)
     positives = int(sample["label"].sum())
     negatives = len(sample) - positives
@@ -128,6 +133,7 @@ def build_oof_ledger(
     event: str,
     *,
     spec: ProbabilitySpec | None = None,
+    feature_names: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Build the complete sequential OOF ledger for one event."""
 
@@ -137,6 +143,7 @@ def build_oof_ledger(
         target_ledger,
         event,
         spec=spec,
+        feature_names=feature_names,
     )
     return _append_sequential_calibration(raw, start_index=0, spec=spec)
 
@@ -148,6 +155,7 @@ def _build_raw_oof_rows(
     *,
     spec: ProbabilitySpec,
     prediction_dates: pd.DatetimeIndex | None = None,
+    feature_names: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Fit raw OOF predictions, optionally only for explicit prediction dates.
 
@@ -156,7 +164,7 @@ def _build_raw_oof_rows(
     already-published OOF predictions are never refit.
     """
 
-    features = LOGISTIC_FEATURES[event]
+    features = list(LOGISTIC_FEATURES[event] if feature_names is None else feature_names)
     source = state_features[["session_date", *features]].rename(
         columns={"session_date": "prediction_date"}
     )
@@ -192,7 +200,11 @@ def _build_raw_oof_rows(
                 "converged": False,
             }
         else:
-            model, model_meta = _fit_model(training, event, spec)
+            model, model_meta = (
+                _fit_model(training, event, spec)
+                if feature_names is None
+                else _fit_model(training, event, spec, feature_names=features)
+            )
         if event not in BASE_RATE_ONLY_EVENTS and (
             model is None or row[features].isna().any()
         ):

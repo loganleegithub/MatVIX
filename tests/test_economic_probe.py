@@ -9,6 +9,7 @@ from matvix.economic_probe import (
     adapt_weather,
     build_economic_probe,
     build_probe_ledger,
+    build_v3_economic_probe,
     classify_probe,
     parse_yahoo_chart,
     target_asset,
@@ -206,3 +207,19 @@ def test_synthetic_end_to_end_probe_writes_one_ledger_json_and_html(tmp_path) ->
     assert len(timeline.data) == 2
     assert all(len(trace.z) == 2 for trace in timeline.data)
     assert all(len(row) == len(dates) - 2 for trace in timeline.data for row in trace.z)
+
+    station["dimension_order"] = list(station["dimensions"])
+    shadow = pd.DataFrame(columns=[
+        "prediction_date", "published_probability", "base_rate_at_prediction",
+        "calibration_method",
+    ])
+    v3_ledger, v3_report = build_v3_economic_probe(
+        v2_states=states, v3_states=states, shadow_oof=shadow, prices=prices,
+        source_manifest={"batch_id": "synthetic"}, station_summary=station,
+        replay_evidence={},
+    )
+    assert v3_report["classifications"] == {
+        "short": "MIXED", "long": "POSITIVE", "combined": "POSITIVE",
+    }
+    assert v3_report["frozen_v3_gates"]["long_daily_exact"] is True
+    assert "unqualified_fragility_veto_shadow" in v3_ledger

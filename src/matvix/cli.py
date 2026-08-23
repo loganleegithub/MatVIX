@@ -40,7 +40,7 @@ from matvix.data.cboe import SUPPORTED_SYMBOLS, download_cboe_core, import_cboe_
 from matvix.data.cfe import download_monthly_history, import_cfe_directory
 from matvix.data.point_in_time import merge_revision_history
 from matvix.data.spx import import_spx_close
-from matvix.economic_probe import run_frozen_economic_probe
+from matvix.economic_probe import run_frozen_economic_probe, run_frozen_v3_economic_probe
 from matvix.http_runtime import serve_dashboard_runtime
 from matvix.pipeline import (
     ProjectPaths,
@@ -240,6 +240,25 @@ def run_v2_economic_probe(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None
         project_root=root,
         v1_states=read_parquet(root / "outputs" / "v2_baseline" / "v1_states.parquet"),
         v2_states=read_parquet(root / "data" / "processed" / "states.parquet"),
+        station_summary=station,
+    )
+    for probe, result in report["classifications"].items():
+        typer.echo(f"{probe}: {result}")
+    typer.echo(f"COMPREHENSIVE_VERDICT: {report['comprehensive_verdict']}")
+    for path in outputs.values():
+        typer.echo(f"Wrote {path}")
+
+
+@app.command("run-v3-economic-probe")
+def run_v3_economic_probe(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
+    """Run the one frozen V2/V3 unqualified-veto research probe."""
+
+    root = project_dir.resolve()
+    station = read_json(root / "outputs" / "v3_station_acceptance" / "summary.json")
+    outputs, report = run_frozen_v3_economic_probe(
+        project_root=root,
+        v2_states=read_parquet(root / "outputs" / "v3_baseline" / "v2_states.parquet"),
+        v3_states=read_parquet(root / "data" / "processed" / "states.parquet"),
         station_summary=station,
     )
     for probe, result in report["classifications"].items():
