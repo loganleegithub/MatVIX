@@ -4,6 +4,10 @@ The proposed V3 Core prospective protocol is currently a non-executed human-revi
 `MATVIX_PROSPECTIVE_001_CONTRACT.md`. No runtime writer, Schema, activation tag or formal
 Core prospective sample exists yet. Historical release snapshots must not be backfilled.
 
+The authorized read-only P0 feasibility analysis is recorded in
+`MATVIX_PROSPECTIVE_001_POWER_DESIGN.md`. Its proposed evidence counts, estimands and verdict
+rules are recommendations only; they have not been frozen into the construction contract.
+
 The CSV below is a separate rejected-adapter counterfactual ledger.
 
 ## Fragility prospective shadow ledger
