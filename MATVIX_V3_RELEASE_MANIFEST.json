@@ -1,0 +1,106 @@
+{
+  "manifest_version": "1.0.0",
+  "release": {
+    "name": "MatVIX V3",
+    "release_ref": "matvix-v3.0.0",
+    "package_version": "3.0.0",
+    "model_id": "MATVIX_CBOE_CORE_V3",
+    "schema_version": "3.0.0",
+    "feature_version": "3.0.0",
+    "state_version": "3.0.0",
+    "probability_version": "3.0.0"
+  },
+  "product_boundary": {
+    "mode": "READ_ONLY_RESEARCH_WEATHER_STATION",
+    "trading_authorized": false,
+    "orders_or_positions_emitted": false,
+    "historical_economic_result": "HISTORICAL_RESEARCH_SUPPORT",
+    "production_promotion_claimed": false
+  },
+  "git_identity": {
+    "resolution": "git rev-parse matvix-v3.0.0^{commit} matvix-v3.0.0^{tree}",
+    "note": "The local annotated release tag fixes the final commit and tree without a self-referential manifest hash."
+  },
+  "runtime": {
+    "tested_platform": "macOS 26.5.1 arm64",
+    "python": "3.12.13",
+    "requirements_lock": {
+      "path": "requirements.lock",
+      "sha256": "56182b305edb53e9e7288765fc7d74737955e0da774c4084542fbc92ea2362ba"
+    },
+    "formal_probability_runtime": {
+      "scikit-learn": "1.7.2"
+    }
+  },
+  "frozen_configuration": {
+    "semantic_bundle_digest": "sha256:cd2429b937cbe7f8f7b945df53240ad21b6c047750a9dde8228c01272870d56b",
+    "files": {
+      "configs/source_manifest.yaml": "b3bbba459540948346480a10a9b6e2163e19ab4ee93415b52d0739cab58ad8cb",
+      "configs/features_v3.yaml": "b17947bfff3095e8d5659f804bed3db0cd5ed9c5459d8e2a2b755765e16645d0",
+      "configs/state_v3.yaml": "044d7554fb237a9bb9675c29f039c81a4e06f37583d022d55a61a990f443bd8f",
+      "configs/probability_v3.yaml": "5d791669a90d8bbca166fa731eb0367272831cb11ed46b1145a3f4faaf656e53",
+      "schemas/daily_output.schema.json": "70944a8592ed90317ce7ab34efd53d5682b51ba6e3fe88e9a290c6b3ecb70509"
+    }
+  },
+  "authorized_data_requirement": {
+    "restricted_data_included": false,
+    "vendor_manifest_path": "data/raw/vendor/audit/SHA256SUMS.txt",
+    "vendor_manifest_entries": 183,
+    "vendor_manifest_sha256": "306b45363fb0d8415eda21ce786524972d8514f110fc8f8d9d402dbb6c1e7df6",
+    "required_series": [
+      "VIX_OPEN",
+      "VIX_HIGH",
+      "VIX_LOW",
+      "VIX_CLOSE",
+      "VIX9D_CLOSE",
+      "VIX3M_CLOSE",
+      "VIX6M_CLOSE",
+      "VVIX_CLOSE",
+      "SKEW_CLOSE",
+      "SPX_CLOSE",
+      "STANDARD_MONTHLY_VX_F1_F7_SETTLEMENTS"
+    ]
+  },
+  "accepted_publication": {
+    "session_date": "2026-08-20",
+    "snapshot": {
+      "path": "outputs/daily/2026-08-20.json",
+      "sha256": "287ce0d5e16b94d2d5a3f5479c0c0a1ea00a42768f545a052478a44a23a2d215"
+    },
+    "receipt": {
+      "path": "artifacts/acceptance/real_acceptance_2026-08-20.json",
+      "sha256": "670a566bfc34791b6c82bf4b8a928944a71c4c79c2c3181d1bed33ccf907c4ed"
+    },
+    "accepted_snapshot_count": 1
+  },
+  "scientific_evidence": {
+    "stage_d": {
+      "status": "PASS",
+      "dimensions": [
+        "DATA",
+        "TENOR",
+        "STATE_TIMING",
+        "PROBABILITY_INTEGRITY",
+        "PROBABILITY_MODEL",
+        "BASE_RATE_REFERENCE",
+        "FRAGILITY_BOUNDARY"
+      ],
+      "daily_ledger_sha256": "24de7e129cf2349bc18bc3aef697986af4c77184ea017c7dc2ad9423b049a7ef",
+      "summary_sha256": "54b4c4dd73c4f3f380e90981015b3499bd6a67fe4328c08f44bc97e7e93eba93",
+      "report_sha256": "10b1c08a6a547c85864a7319ccfe977aa2e42a0842479eb1c27ecd8b79a35fcd"
+    },
+    "historical_economic_probe": {
+      "verdict": "NO_COMPREHENSIVE_INCREMENT",
+      "classification": "HISTORICAL_RESEARCH_SUPPORT",
+      "adapter_promoted": false,
+      "daily_ledger_sha256": "2262667420ba371d25d552959b918d4ca53abae4c7293bd14b1192f568b5321e",
+      "report_json_sha256": "5c6ff064bb1d5a63153967656aac33d1c7f707db006eb1c31e70833370c5a8b5",
+      "report_html_sha256": "300dbf179bd90029421d6d20278d52f1e73d96a202c0d7ad7568186a367f714a"
+    },
+    "prospective_fragility_ledger": {
+      "status": "ESTABLISHED_EMPTY_APPEND_ONLY",
+      "data_rows": 0,
+      "sha256": "49b02bc374987eebf6209dfe16bc6ddabbe02633f6396dc288abcef860fb433f"
+    }
+  }
+}

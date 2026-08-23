@@ -49,16 +49,16 @@ def test_checked_in_release_config_is_bound_to_runtime_semantics() -> None:
 
     assert report.versions == {
         "source_manifest.yaml": "1.0.0",
-        "features_v2.yaml": "3.0.0",
-        "state_v2.yaml": "3.0.0",
-        "probability_v2.yaml": "3.0.0",
+        "features_v3.yaml": "3.0.0",
+        "state_v3.yaml": "3.0.0",
+        "probability_v3.yaml": "3.0.0",
     }
     assert report.config_bundle_digest.startswith("sha256:")
 
 
 def test_yaml_comment_and_format_changes_do_not_change_contract(tmp_path: Path) -> None:
     root = _copy_release_configs(tmp_path)
-    feature_path = root / "configs" / "features_v2.yaml"
+    feature_path = root / "configs" / "features_v3.yaml"
     feature_path.write_text(
         feature_path.read_text(encoding="utf-8") + "\n# release operator note\n",
         encoding="utf-8",
@@ -69,7 +69,7 @@ def test_yaml_comment_and_format_changes_do_not_change_contract(tmp_path: Path) 
 
 def test_config_value_change_without_versioned_release_is_rejected(tmp_path: Path) -> None:
     root = _copy_release_configs(tmp_path)
-    probability_path = root / "configs" / "probability_v2.yaml"
+    probability_path = root / "configs" / "probability_v3.yaml"
     probability_path.write_text(
         probability_path.read_text(encoding="utf-8").replace(
             "min_training_samples: 252", "min_training_samples: 253"
@@ -77,7 +77,7 @@ def test_config_value_change_without_versioned_release_is_rejected(tmp_path: Pat
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigContractError, match="probability_v2.yaml: semantic digest"):
+    with pytest.raises(ConfigContractError, match="probability_v3.yaml: semantic digest"):
         validate_frozen_config(root)
 
 
@@ -117,7 +117,7 @@ def test_project_root_runs_release_validation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     root = _copy_release_configs(tmp_path)
-    feature_path = root / "configs" / "features_v2.yaml"
+    feature_path = root / "configs" / "features_v3.yaml"
     feature_path.write_text(
         feature_path.read_text(encoding="utf-8").replace('version: "3.0.0"', 'version: "9.0.0"', 1),
         encoding="utf-8",

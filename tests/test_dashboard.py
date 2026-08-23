@@ -33,6 +33,7 @@ def _event(
 
 def _snapshot() -> dict[str, Any]:
     return {
+        "model_id": "MATVIX_CBOE_CORE_V3",
         "session_date": "2026-08-18",
         "decision_as_of": "2026-08-19T09:20:00-04:00",
         "data_status": "OK",
@@ -146,7 +147,9 @@ def test_trader_dashboard_explains_state_and_probability_qualification() -> None
 def test_trader_dashboard_exposes_interaction_and_http_polling_hooks() -> None:
     dashboard = _rendered()
 
-    assert 'data-dashboard-version="trader-v2"' in dashboard
+    assert 'data-dashboard-version="trader-v3"' in dashboard
+    assert 'id="product-status" data-status="READY"' in dashboard
+    assert "V3 · READY · 只读研究" in dashboard
     assert 'id="runtime-status"' in dashboard
     assert 'data-status-endpoint="/api/status"' in dashboard
     assert 'data-open-panel="conflict-panel"' in dashboard

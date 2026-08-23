@@ -16,6 +16,11 @@ from urllib.parse import urlsplit
 
 import pandas as pd
 
+from matvix.constants import (
+    BASE_RATE_ONLY_EVENTS,
+    FEATURE_CONDITIONAL_EVENTS,
+    MODEL_ID,
+)
 from matvix.daily_update import frame_content_digest
 from matvix.dashboard import render_dashboard
 from matvix.pipeline import ProjectPaths
@@ -404,6 +409,65 @@ def _read_update_status(path: Path) -> tuple[dict[str, Any], str | None]:
     return payload, _iso_mtime(path)
 
 
+def _product_readiness(
+    latest: AcceptedSnapshot | None,
+    update: dict[str, Any],
+    render_failure: dict[str, Any] | None,
+) -> tuple[str, list[str], dict[str, dict[str, Any]]]:
+    """Classify publication health without granting downstream trading authority."""
+
+    if latest is None:
+        return "BLOCKED", ["NO_ACCEPTED_V3_SNAPSHOT"], {}
+
+    payload = latest.payload
+    probabilities = payload.get("probability_judgment")
+    event_models: dict[str, dict[str, Any]] = {}
+    reasons: list[str] = []
+    blocked = False
+    if payload.get("model_id") != MODEL_ID:
+        blocked = True
+        reasons.append("ACCEPTED_SNAPSHOT_IS_NOT_V3")
+    if payload.get("data_status") != "OK":
+        blocked = True
+        reasons.append("ACCEPTED_SNAPSHOT_DATA_NOT_OK")
+    if not isinstance(probabilities, dict):
+        reasons.append("EVENT_MODEL_SURFACE_MISSING")
+        probabilities = {}
+
+    for event in (*FEATURE_CONDITIONAL_EVENTS, *BASE_RATE_ONLY_EVENTS):
+        raw = probabilities.get(event)
+        if not isinstance(raw, dict):
+            event_models[event] = {
+                "event_status": "MISSING",
+                "model_status": "MISSING",
+                "probability_kind": None,
+            }
+            reasons.append(f"EVENT_SURFACE_MISSING:{event}")
+            continue
+        event_status = str(raw.get("event_status", "MISSING"))
+        model_status = str(raw.get("model_status", "MISSING"))
+        event_models[event] = {
+            "event_status": event_status,
+            "model_status": model_status,
+            "probability_kind": raw.get("probability_kind"),
+        }
+        if event_status != "ELIGIBLE":
+            continue
+        if event in FEATURE_CONDITIONAL_EVENTS and model_status != "CALIBRATED_MODEL":
+            reasons.append(f"CONDITIONAL_MODEL_FALLBACK:{event}")
+        if event in BASE_RATE_ONLY_EVENTS and model_status != "BASE_RATE_ONLY":
+            reasons.append(f"BASE_RATE_REFERENCE_INVALID:{event}")
+
+    if render_failure is not None:
+        reasons.append("LATEST_CANDIDATE_RENDER_FAILED")
+    if str(update.get("status")) in {"FAILED", "WINDOW_EXHAUSTED", "INVALID"}:
+        reasons.append(f"UPDATER_{update.get('status')}")
+
+    if blocked:
+        return "BLOCKED", reasons, event_models
+    return ("DEGRADED" if reasons else "READY"), reasons, event_models
+
+
 class DashboardHTTPRuntime:
     """Local, read-only MatVIX publication server with a testable lifecycle."""
 
@@ -534,8 +598,25 @@ class DashboardHTTPRuntime:
             if latest is not None
             else "DEGRADED"
         )
+        product_status, product_reasons, event_models = _product_readiness(
+            latest, update, render_failure
+        )
+        snapshot_age = (
+            (datetime.now(UTC).date() - date.fromisoformat(latest_session)).days
+            if latest_session is not None
+            else None
+        )
         return {
             "runtime_status": runtime_status,
+            "product_status": product_status,
+            "product_status_reasons": product_reasons,
+            "trading_authorized": False,
+            "event_models": event_models,
+            "snapshot_freshness": {
+                "session_date": latest_session,
+                "published_at": published_at,
+                "age_calendar_days": snapshot_age,
+            },
             "checked_at": checked_at,
             "started_at": started_at,
             "uptime_seconds": round(uptime, 3),

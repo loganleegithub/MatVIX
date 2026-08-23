@@ -14,11 +14,9 @@ import typer
 
 from matvix.acceptance import (
     build_real_acceptance_report,
-    build_v2_station_acceptance,
     build_v3_station_acceptance,
     failed_gate_names,
     write_real_acceptance_report,
-    write_v2_station_acceptance,
     write_v3_station_acceptance,
 )
 from matvix.calendar import decision_as_of
@@ -40,7 +38,7 @@ from matvix.data.cboe import SUPPORTED_SYMBOLS, download_cboe_core, import_cboe_
 from matvix.data.cfe import download_monthly_history, import_cfe_directory
 from matvix.data.point_in_time import merge_revision_history
 from matvix.data.spx import import_spx_close
-from matvix.economic_probe import run_frozen_economic_probe, run_frozen_v3_economic_probe
+from matvix.economic_probe import run_frozen_v3_economic_probe
 from matvix.http_runtime import serve_dashboard_runtime
 from matvix.pipeline import (
     ProjectPaths,
@@ -119,58 +117,6 @@ def doctor(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
         raise typer.Exit(code=2)
 
 
-@app.command("accept-v2-station")
-def accept_v2_station(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
-    """Run the weather-only Phase-D acceptance and write its three evidence artifacts."""
-
-    paths = _paths(project_dir)
-    observations, vx_contracts = load_persisted_inputs(paths)
-    features = read_parquet(paths.features)
-    states = load_persisted_states(paths)
-    targets, oof, _, _ = resolve_persisted_probability_artifacts(
-        paths, states, formal_runtime_required=True
-    )
-    complete = states.loc[states["data_status"].eq("OK")]
-    if complete.empty:
-        raise typer.BadParameter("No data_status=OK state is available for station acceptance")
-    selected = pd.Timestamp(complete["session_date"].max()).normalize()
-    snapshot, _, _, _ = build_snapshot_payload(
-        states,
-        observations,
-        vx_contracts,
-        session_date=selected,
-        formal_runtime_required=True,
-        target_ledger=targets,
-        oof_ledger=oof,
-    )
-    real_acceptance = build_real_acceptance_report(
-        observations=observations,
-        vx_contracts=vx_contracts,
-        states=states,
-        targets=targets,
-        oof=oof,
-        snapshot=snapshot,
-    )
-    phase_a_dir = paths.root / "outputs" / "v2_audit"
-    daily, summary = build_v2_station_acceptance(
-        observations=observations,
-        vx_contracts=vx_contracts,
-        features=features,
-        states=states,
-        targets=targets,
-        oof=oof,
-        real_acceptance=real_acceptance,
-        phase_a_daily=read_parquet(phase_a_dir / "business_audit_daily.parquet"),
-        phase_a_summary=read_json(phase_a_dir / "business_audit_summary.json"),
-    )
-    outputs = write_v2_station_acceptance(daily, summary, paths.root)
-    for name, result in summary["dimensions"].items():
-        typer.echo(f"{name}: {result['status']}")
-    typer.echo(f"ECONOMIC_PROBE_ENTRY: {summary['economic_probe_entry']['status']}")
-    for path in outputs.values():
-        typer.echo(f"Wrote {path}")
-
-
 @app.command("accept-v3-station")
 def accept_v3_station(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
     """Run all seven weather-only V3 Stage-D gates and write their evidence."""
@@ -221,30 +167,6 @@ def accept_v3_station(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
     for name in summary["dimension_order"]:
         typer.echo(f"{name}: {summary['dimensions'][name]['status']}")
     typer.echo(f"STAGE_E_ENTRY: {summary['economic_probe_entry']['status']}")
-    for path in outputs.values():
-        typer.echo(f"Wrote {path}")
-
-
-@app.command("run-v2-economic-probe")
-def run_v2_economic_probe(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
-    """Run the one frozen SVXY/SGOV/VXZ probe after the Phase-D entry gate."""
-
-    root = project_dir.resolve()
-    station_path = root / "outputs" / "v2_station_acceptance" / "summary.json"
-    station = read_json(station_path)
-    if station.get("economic_probe_entry", {}).get("status") != "PASS":
-        raise typer.BadParameter(
-            "Economic probe is blocked until the four key station dimensions pass"
-        )
-    outputs, report = run_frozen_economic_probe(
-        project_root=root,
-        v1_states=read_parquet(root / "outputs" / "v2_baseline" / "v1_states.parquet"),
-        v2_states=read_parquet(root / "data" / "processed" / "states.parquet"),
-        station_summary=station,
-    )
-    for probe, result in report["classifications"].items():
-        typer.echo(f"{probe}: {result}")
-    typer.echo(f"COMPREHENSIVE_VERDICT: {report['comprehensive_verdict']}")
     for path in outputs.values():
         typer.echo(f"Wrote {path}")
 

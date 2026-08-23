@@ -12,7 +12,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from matvix.constants import EVENT_ORDER
+from matvix.constants import (
+    BASE_RATE_ONLY_EVENTS,
+    EVENT_ORDER,
+    FEATURE_CONDITIONAL_EVENTS,
+    MODEL_ID,
+)
 from matvix.state.scores import component_contributions
 from matvix.storage import read_json
 
@@ -178,7 +183,9 @@ LIVE_STATUS_SCRIPT = """
     FAILED: "更新失败，保留上一完整截面",
     DASHBOARD_RENDER_FAILED: "新截面展示失败，保留上一可用页面",
     RUNNING: "系统运行",
-    DEGRADED: "系统降级"
+    DEGRADED: "系统降级",
+    READY: "READY",
+    BLOCKED: "BLOCKED"
   };
 
   function formatEtTime(value) {
@@ -197,6 +204,7 @@ LIVE_STATUS_SCRIPT = """
     if (!payload || typeof payload !== "object") return;
     const runtime = document.getElementById("runtime-status");
     const runtimeText = document.getElementById("runtime-status-text");
+    const productStatus = document.getElementById("product-status");
     const update = payload.update && typeof payload.update === "object" ? payload.update : payload;
     const renderFailure = payload.render_failure || payload.dashboard_error;
     const latest = payload.latest_snapshot_session || payload.last_good_session;
@@ -205,6 +213,10 @@ LIVE_STATUS_SCRIPT = """
     const currentRevision = document.body.dataset.dashboardRevision;
     const revisionChanged = payload.dashboard_revision && currentRevision
       && payload.dashboard_revision !== currentRevision;
+    if (productStatus && payload.product_status) {
+      productStatus.textContent = `V3 · ${payload.product_status} · 只读研究`;
+      productStatus.dataset.status = payload.product_status;
+    }
     if (runtimeText) {
       const rawStatus = payload.runtime_status === "DASHBOARD_RENDER_FAILED"
         ? payload.runtime_status
@@ -333,6 +345,17 @@ button:focus-visible, summary:focus-visible {
   margin: 0 10px 0 4px;
 }
 .freshness .dot.not-ok { background: var(--orange); }
+.product-readiness {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #cbd3df;
+  font-size: 12px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+.product-readiness[data-status="READY"] { border-color: rgba(50, 210, 134, .5); }
+.product-readiness[data-status="DEGRADED"] { border-color: rgba(255, 178, 31, .65); }
+.product-readiness[data-status="BLOCKED"] { border-color: rgba(255, 92, 92, .7); }
 .method-button {
   color: #cbd3df;
   border: 1px solid var(--line);
@@ -854,6 +877,30 @@ def _probability_mode_label(event: dict[str, Any]) -> tuple[str, str]:
     return "当前不发布模型判断", "inactive"
 
 
+def _snapshot_product_status(snapshot: dict[str, Any]) -> str:
+    """Classify the frozen snapshot surface; this is never a trade decision."""
+
+    if snapshot.get("model_id") != MODEL_ID or snapshot.get("data_status") != "OK":
+        return "BLOCKED"
+    probabilities = snapshot.get("probability_judgment")
+    if not isinstance(probabilities, dict):
+        return "DEGRADED"
+    for event in (*FEATURE_CONDITIONAL_EVENTS, *BASE_RATE_ONLY_EVENTS):
+        publication = probabilities.get(event)
+        if not isinstance(publication, dict):
+            return "DEGRADED"
+        if publication.get("event_status") != "ELIGIBLE":
+            continue
+        expected = (
+            "CALIBRATED_MODEL"
+            if event in FEATURE_CONDITIONAL_EVENTS
+            else "BASE_RATE_ONLY"
+        )
+        if publication.get("model_status") != expected:
+            return "DEGRADED"
+    return "READY"
+
+
 def _outlook_label(outlook: Any) -> str:
     return {
         "NO_STRONG_EDGE": "暂无强概率优势",
@@ -1104,6 +1151,7 @@ def render_dashboard(
     diagnostics_map = snapshot.get("diagnostics", {})
     data_status = str(snapshot.get("data_status", "UNKNOWN"))
     data_status_label = DATA_STATUS_LABELS.get(data_status, data_status)
+    product_status = _snapshot_product_status(snapshot)
     decision_label = _decision_label(snapshot.get("decision_as_of"))
     baseline = story.get("baseline_score")
     carry_risk = _numeric(scores.get("carry_risk"))
@@ -1326,7 +1374,7 @@ def render_dashboard(
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MatVIX {html.escape(snapshot["session_date"])}</title>
 <style>{DASHBOARD_STYLES}</style></head>
-<body data-status-endpoint="/api/status" data-session-date="{html.escape(str(snapshot['session_date']))}" data-dashboard-version="trader-v2">
+<body data-status-endpoint="/api/status" data-session-date="{html.escape(str(snapshot['session_date']))}" data-dashboard-version="trader-v3">
 <header class="topbar">
   <div class="brand">MatVIX · 期权气象站</div>
   <div class="freshness" id="runtime-status"><span class="dot{freshness_class}" aria-hidden="true"></span>
@@ -1334,6 +1382,7 @@ def render_dashboard(
     <span data-live-field="session_date">{html.escape(str(snapshot['session_date']))}</span> · 正式可用
     <span data-live-field="decision_as_of">{html.escape(decision_label)}</span></span>
   </div>
+  <div class="product-readiness" id="product-status" data-status="{product_status}">V3 · {product_status} · 只读研究</div>
   <button class="method-button" type="button" data-open-panel="quant-panel" aria-controls="quant-panel" aria-expanded="false">方法与口径</button>
 </header>
 <main>

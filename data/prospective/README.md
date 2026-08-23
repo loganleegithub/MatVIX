@@ -18,7 +18,7 @@ Rules:
 - Record the frozen unqualified score and counterfactual mapping only. The ledger
   grants no trading authority and cannot qualify `PROB-FRAGILITY-002`.
 - A future adjudication requires a separate, prospectively frozen power/evidence
-  contract. It cannot alter the V3 v1.3 historical verdict.
+  contract. It cannot alter the frozen V3 historical verdict.
 
 `v3_fragility_shadow_ledger.csv` contains the frozen columns needed to trace
 signal -> counterfactual position -> price -> cost -> outcome -> NAV. The current

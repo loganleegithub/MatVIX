@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from matvix.constants import EVENT_ORDER, MODEL_ID
 from matvix.daily_update import frame_content_digest, with_snapshot_publication_binding
 from matvix.http_runtime import (
     DashboardHTTPRuntime,
@@ -28,10 +29,19 @@ def _publish(
     data_status: str = "OK",
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
+        "model_id": MODEL_ID,
         "session_date": session,
         "decision_as_of": f"{session}T09:20:00-04:00",
         "data_status": data_status,
         "market_story": {"headline": f"session {session}"},
+        "probability_judgment": {
+            event: {
+                "event_status": "NOT_APPLICABLE",
+                "model_status": "NOT_RUN",
+                "probability_kind": None,
+            }
+            for event in EVENT_ORDER
+        },
     }
     snapshot_path = project / "outputs" / "daily" / f"{session}.json"
     write_json(payload, snapshot_path)
@@ -174,6 +184,11 @@ def test_runtime_serves_html_status_snapshot_and_health(tmp_path: Path) -> None:
 
         status = _json_request(runtime, "/api/status")
         assert status["runtime_status"] == "RUNNING"
+        assert status["product_status"] == "READY"
+        assert status["product_status_reasons"] == []
+        assert status["trading_authorized"] is False
+        assert set(status["event_models"]) == set(EVENT_ORDER)
+        assert status["snapshot_freshness"]["session_date"] == "2026-08-18"
         assert status["latest_session"] == "2026-08-18"
         assert status["latest_snapshot_session"] == "2026-08-18"
         assert status["last_good_session"] == "2026-08-18"
@@ -452,11 +467,43 @@ def test_runtime_degrades_cleanly_before_first_publication(tmp_path: Path) -> No
     with DashboardHTTPRuntime(tmp_path, port=0, renderer=_renderer) as runtime:
         status = _json_request(runtime, "/api/status")
         assert status["runtime_status"] == "DEGRADED"
+        assert status["product_status"] == "BLOCKED"
+        assert status["product_status_reasons"] == ["NO_ACCEPTED_V3_SNAPSHOT"]
+        assert status["trading_authorized"] is False
         assert status["latest_session"] is None
         assert status["update"]["status"] == "UNKNOWN"
         assert _request(runtime, "/")[0] == 503
         assert _request(runtime, "/api/snapshot")[0] == 503
         assert _json_request(runtime, "/healthz")["ok"] is True
+
+
+def test_conditional_model_fallback_marks_product_degraded_without_trade_authority(
+    tmp_path: Path,
+) -> None:
+    session = "2026-08-18"
+    payload = _publish(tmp_path, session)
+    payload["probability_judgment"]["acute_front_stress_5d"] = {
+        "event_status": "ELIGIBLE",
+        "model_status": "BASE_RATE_ONLY",
+        "probability_kind": "HISTORICAL_REFERENCE",
+    }
+    snapshot_path = tmp_path / "outputs" / "daily" / f"{session}.json"
+    write_json(payload, snapshot_path)
+    write_json(
+        with_snapshot_publication_binding(
+            {"session_date": session, "passed": True}, snapshot_path
+        ),
+        tmp_path / "artifacts" / "acceptance" / f"real_acceptance_{session}.json",
+    )
+
+    with DashboardHTTPRuntime(tmp_path, port=0, renderer=_renderer) as runtime:
+        status = _json_request(runtime, "/api/status")
+
+    assert status["product_status"] == "DEGRADED"
+    assert status["product_status_reasons"] == [
+        "CONDITIONAL_MODEL_FALLBACK:acute_front_stress_5d"
+    ]
+    assert status["trading_authorized"] is False
 
 
 def test_head_returns_headers_without_body(tmp_path: Path) -> None:
