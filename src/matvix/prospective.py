@@ -142,6 +142,12 @@ def _validate_schema(payload: Mapping[str, Any], schema_name: str) -> None:
 def validate_prediction_record(payload: Mapping[str, Any]) -> None:
     _validate_schema(payload, PREDICTION_SCHEMA_NAME)
     session = _normalized_date(payload["session_date"], field="session_date")
+    decision_time = datetime.fromisoformat(str(payload["decision_as_of"]))
+    captured_time = datetime.fromisoformat(str(payload["captured_at"]))
+    if decision_time.tzinfo is None or captured_time.tzinfo is None:
+        raise ProspectiveValidationError("prediction timestamps must be timezone-aware")
+    if captured_time < decision_time:
+        raise ProspectiveValidationError("prediction cannot be captured before decision_as_of")
     snapshot = cast(Mapping[str, Any], payload["snapshot"])
     expected_snapshot_path = f"outputs/daily/{session}.json"
     if snapshot["relative_path"] != expected_snapshot_path:
@@ -212,6 +218,8 @@ def validate_outcome_record(payload: Mapping[str, Any]) -> None:
     resolved_at = datetime.fromisoformat(str(payload["resolved_at"]))
     if outcome_at.tzinfo is None or resolved_at.tzinfo is None:
         raise ProspectiveValidationError("outcome and resolution timestamps must be timezone-aware")
+    if resolved_at < outcome_at:
+        raise ProspectiveValidationError(f"outcome resolved before it became available: {event_id}")
     if bool(payload["resolved_late"]) != (resolved_at > outcome_at):
         raise ProspectiveValidationError(f"resolved_late mismatch: {event_id}")
 
@@ -291,6 +299,24 @@ def read_prediction_record(
         raise ProspectiveCorruptionError(f"prospective evidence is not read-only: {path}")
     payload = _read_json_object(content, path=path)
     validate_prediction_record(payload)
+    binding = EvidenceBinding(
+        relative_path=_relative_path(root, path),
+        sha256=_sha256(content),
+        bytes=len(content),
+    )
+    return payload, binding
+
+
+def read_outcome_record(
+    project_dir: str | Path, session_date: str, event_id: str
+) -> tuple[dict[str, Any], EvidenceBinding]:
+    root = Path(project_dir).resolve()
+    path = outcome_record_path(root, session_date, event_id)
+    content, metadata = _stable_content(path)
+    if stat.S_IMODE(metadata.st_mode) != 0o444:
+        raise ProspectiveCorruptionError(f"prospective evidence is not read-only: {path}")
+    payload = _read_json_object(content, path=path)
+    validate_outcome_record(payload)
     binding = EvidenceBinding(
         relative_path=_relative_path(root, path),
         sha256=_sha256(content),

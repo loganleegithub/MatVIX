@@ -71,6 +71,7 @@ from matvix.prospective import (
     read_prediction_record,
     validate_receipt_evidence,
 )
+from matvix.prospective_resolver import resolve_due_outcomes
 from matvix.source_identity import (
     OFFICIAL_SOURCE_IDENTITIES,
     SourceIdentity,
@@ -1643,6 +1644,10 @@ def _run_daily_update_locked(
                 candidate.oof,
                 candidate.probability_contract,
             )
+        # Resolve only already receipt-bound predictions, using the exact
+        # persisted target generation. A conflict is an audit stop and occurs
+        # before the current snapshot/receipt can become a new publication.
+        resolve_due_outcomes(paths.root, now=current)
         if snapshot_changed:
             persist_snapshot(
                 paths,

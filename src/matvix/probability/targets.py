@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TypeAlias
 
 import numpy as np
@@ -15,6 +16,15 @@ from matvix.constants import (
 )
 
 Tri: TypeAlias = bool | None
+
+
+@dataclass(frozen=True)
+class ResolvedEventWindow:
+    label: int
+    label_status: str
+    valid_through_session: pd.Timestamp
+    outcome_available_at: pd.Timestamp
+    first_event_session: pd.Timestamp | None
 
 
 def _known_bool(value: object) -> Tri:
@@ -166,6 +176,71 @@ def _future_predicate_vintage_eligible(row: pd.Series, event: str) -> bool:
     return bool(row.get("formal_vintage_eligible", False))
 
 
+def _resolved_event_window(
+    state: pd.DataFrame, index: int, event: str
+) -> ResolvedEventWindow | None:
+    horizon = EVENT_HORIZONS[event]
+    end = index + horizon
+    if end >= len(state):
+        return None
+    future = state.iloc[index + 1 : end + 1]
+    predicates = [_future_predicate(row, event) for _, row in future.iterrows()]
+    # Outcome observability is event-specific. A missing unrelated axis cannot
+    # censor a predicate whose own PIT input chain is complete.
+    complete = (
+        len(future) == horizon
+        and all(predicate is not None for predicate in predicates)
+        and all(
+            _future_predicate_vintage_eligible(future_row, event)
+            for _, future_row in future.iterrows()
+        )
+    )
+    if not complete:
+        return None
+    true_positions = [position for position, value in enumerate(predicates) if bool(value)]
+    if event == "broad_stress_persists_10d":
+        observed = len(true_positions) >= 5
+        first_position = true_positions[4] if observed else None
+    else:
+        observed = bool(true_positions)
+        first_position = true_positions[0] if observed else None
+    final_session = pd.Timestamp(future.iloc[-1]["session_date"]).normalize()
+    first_event_session = (
+        pd.Timestamp(future.iloc[first_position]["session_date"]).normalize()
+        if first_position is not None
+        else None
+    )
+    return ResolvedEventWindow(
+        label=int(observed),
+        label_status="OBSERVED_1" if observed else "OBSERVED_0",
+        valid_through_session=final_session,
+        outcome_available_at=pd.Timestamp(decision_as_of(final_session)),
+        first_event_session=first_event_session,
+    )
+
+
+def resolve_event_window(
+    frame: pd.DataFrame,
+    prediction_date: pd.Timestamp | str,
+    event: str,
+) -> ResolvedEventWindow | None:
+    """Resolve one frozen event window, including its first physical hit."""
+
+    if event not in EVENT_HORIZONS:
+        raise KeyError(event)
+    state = add_event_statuses(add_carry_duration_facts(frame)).reset_index(drop=True)
+    prediction = pd.Timestamp(prediction_date).normalize()
+    matching = state.index[
+        pd.to_datetime(state["session_date"]).dt.normalize().eq(prediction)
+    ].tolist()
+    if len(matching) != 1:
+        raise ValueError(f"prediction session must appear exactly once: {prediction.date()}")
+    index = int(matching[0])
+    if str(state.loc[index, f"{event}__event_status"]) != "ELIGIBLE":
+        raise ValueError(f"event is not eligible at prediction session: {event}")
+    return _resolved_event_window(state, index, event)
+
+
 def build_target_ledger(frame: pd.DataFrame) -> pd.DataFrame:
     """Build event-specific PIT labels with explicit censoring.
 
@@ -198,41 +273,16 @@ def build_target_ledger(frame: pd.DataFrame) -> pd.DataFrame:
             if current_status != "ELIGIBLE":
                 records.append(record)
                 continue
-            end = index + horizon
-            if end >= len(state):
+            resolved = _resolved_event_window(state, index, event)
+            if resolved is None:
                 records.append(record)
                 continue
-            future = state.iloc[index + 1 : end + 1]
-            predicates = [
-                _future_predicate(future_row, event) for _, future_row in future.iterrows()
-            ]
-            # Outcome observability is event-specific.  A missing SKEW value,
-            # for example, cannot censor a front-curve outcome whose F1/F2
-            # predicate is fully known.  The PIT-selected inputs used to build
-            # the predicate already carry their own vintage boundary; the
-            # row-wide state/model gate is intentionally not reused here.
-            complete = (
-                len(future) == horizon
-                and all(predicate is not None for predicate in predicates)
-                and all(
-                    _future_predicate_vintage_eligible(future_row, event)
-                    for _, future_row in future.iterrows()
-                )
-            )
-            if not complete:
-                records.append(record)
-                continue
-            if event == "broad_stress_persists_10d":
-                observed = sum(bool(value) for value in predicates) >= 5
-            else:
-                observed = any(bool(value) for value in predicates)
-            final_session = pd.Timestamp(future.iloc[-1]["session_date"]).normalize()
             record.update(
                 {
-                    "label": int(observed),
-                    "label_status": "OBSERVED_1" if observed else "OBSERVED_0",
-                    "valid_through_session": final_session,
-                    "outcome_available_at": pd.Timestamp(decision_as_of(final_session)),
+                    "label": resolved.label,
+                    "label_status": resolved.label_status,
+                    "valid_through_session": resolved.valid_through_session,
+                    "outcome_available_at": resolved.outcome_available_at,
                 }
             )
             records.append(record)

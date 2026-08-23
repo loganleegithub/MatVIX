@@ -42,7 +42,11 @@ from matvix.data.point_in_time import merge_revision_history
 from matvix.features.futures_curve import select_standard_monthly_curve
 from matvix.http_runtime import find_latest_accepted_snapshot
 from matvix.pipeline import ProjectPaths
-from matvix.prospective import ActivationIdentity, prediction_record_path
+from matvix.prospective import (
+    ActivationIdentity,
+    ProspectiveConflictError,
+    prediction_record_path,
+)
 from matvix.storage import read_json, write_json, write_parquet
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -944,6 +948,32 @@ def test_same_session_changed_snapshot_cannot_overwrite_prediction(
     receipt = read_json(acceptance_receipt_path(paths, target))
     assert receipt["prospective_evidence"]["status"] == "EVIDENCE_CAPTURE_GAP"
     assert receipt["prospective_evidence"]["capture_error"] == "ProspectiveConflictError"
+
+
+def test_outcome_conflict_stops_before_current_snapshot_and_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observations, vx, target = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+
+    def conflict(*_args: object, **_kwargs: object) -> object:
+        snapshot = paths.daily_output_dir / f"{target.date().isoformat()}.json"
+        assert not snapshot.exists()
+        raise ProspectiveConflictError("simulated outcome conflict")
+
+    monkeypatch.setattr(daily_update, "resolve_due_outcomes", conflict)
+    result = run_daily_update(
+        tmp_path,
+        target,
+        now=decision_as_of(target) + timedelta(minutes=5),
+        manifest=MANIFEST,
+        candidate_builder=lambda *_args: _candidate(target),
+    )
+
+    assert result.status == DailyUpdateStatus.FAILED
+    assert "ProspectiveConflictError" in result.message
+    assert not (paths.daily_output_dir / f"{target.date().isoformat()}.json").exists()
+    assert not acceptance_receipt_path(paths, target).exists()
 
 
 def test_daily_update_failure_preserves_prior_last_good(tmp_path: Path) -> None:

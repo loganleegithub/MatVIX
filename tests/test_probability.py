@@ -32,6 +32,7 @@ from matvix.probability.targets import (
     add_carry_duration_facts,
     build_target_ledger,
     event_status,
+    resolve_event_window,
 )
 from matvix.probability.walk_forward import (
     ProbabilitySpec,
@@ -129,6 +130,10 @@ def test_broad_persistence_requires_five_of_next_ten_sessions() -> None:
         & (ledger.prediction_date == frame.loc[0, "session_date"])
     ].iloc[0]
     assert row.label == 1
+    resolved = resolve_event_window(frame, frame.loc[0, "session_date"], "broad_stress_persists_10d")
+    assert resolved is not None
+    assert resolved.label == 1
+    assert resolved.first_event_session == pd.Timestamp(frame.loc[9, "session_date"])
 
 
 def test_carry_recovery_uses_future_open_state() -> None:
