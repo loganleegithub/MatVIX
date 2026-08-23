@@ -8,6 +8,18 @@ catalogue of causal event probabilities.
 MatVIX is a read-only research product. It does not generate orders, positions, sizing or
 trading permission.
 
+## Release status
+
+- `RESEARCH_STATION_READY`
+- `READ_ONLY`
+- `NO_TRADING_AUTHORITY`
+- `HISTORICAL_CORE_ACCEPTED`
+- `PROSPECTIVE_CONFIRMATION_PENDING`
+
+The engineering package and release tag are `3.0.1`. The frozen scientific Feature,
+State, Probability and Schema surface remains `3.0.0`; this patch release changes no
+model, threshold or probability contract.
+
 ## Frozen V3 surface
 
 The only current product identity is `MATVIX_CBOE_CORE_V3` with Feature, State,
@@ -29,11 +41,11 @@ The executable authority is the checked-in V3 configuration, schema and code:
 - `configs/source_manifest.yaml`
 - `schemas/daily_output.schema.json`
 
-`MATVIX_V3_CONSTRUCTION_PLAN.md` and `MATVIX_V3_AUDIT.md` are closed construction and
-scientific-evidence records. They are not mutable runtime policy.
 `MATVIX_V3_RELEASE_MANIFEST.json` binds the local release tag, tracked configuration,
 schema, dependency lock, authorized-data requirements and local evidence identities
-without redistributing restricted data.
+without redistributing restricted data. It also retains the rejected Fragility candidate's
+fixed 114/252 OOF boundary. Detailed construction history remains available through Git;
+it is not part of the current release surface or runtime authority.
 
 ## Reproducible environment
 
@@ -73,14 +85,26 @@ Then rebuild and sign the latest complete session:
   --spx-source CBOE \
   --project-dir .
 
+.venv/bin/python -m matvix import-release-generation \
+  --live-dir data/raw/live \
+  --manifest configs/release_live_generation.json \
+  --project-dir .
+
 .venv/bin/python -m matvix build-history --project-dir .
 .venv/bin/python -m matvix train-probabilities --full-rebuild --project-dir .
 .venv/bin/python -m matvix accept-real --project-dir .
+.venv/bin/python -m matvix accept-v3-station --project-dir .
 .venv/bin/python -m matvix export-dashboard \
   --snapshot outputs/daily/2026-08-20.json \
   --output outputs/dashboard.html \
   --project-dir .
 ```
+
+The authorized release-data bundle consists of the vendor baseline, the nine-file live
+generation named by `configs/release_live_generation.json`, and the frozen Stage-D
+historical comparator named by `MATVIX_V3_RELEASE_MANIFEST.json`. The comparator is a
+hash-bound scientific test input, not current runtime authority. `accept-v3-station`
+rejects it if either file is missing, damaged or replaced.
 
 `accept-real` recomputes the persisted-data, target, OOF, calibration and publication
 gates. A required conditional model that loses qualification falls back honestly to the

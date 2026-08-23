@@ -142,10 +142,10 @@ V3_STATION_DIMENSIONS = (
     "FRAGILITY_BOUNDARY",
 )
 REJECTED_FRAGILITY_EVENT_ID = "calm_carry_breaks_5d"
-REJECTED_FRAGILITY_EVIDENCE_TOKENS = (
-    "REJECTED_INSUFFICIENT_PUBLISHED_OOF",
-    "completed published OOF | 252 | 114",
-    "44e7e43efb207b8b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770",
+REJECTED_FRAGILITY_COMPLETED_OOF = 114
+REJECTED_FRAGILITY_REQUIRED_OOF = 252
+REJECTED_FRAGILITY_ARTIFACT_SHA256 = (
+    "44e7e43efb207b8b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770"
 )
 STATION_REQUIRED_OK_FIELDS = (
     "vxcm30",
@@ -1422,7 +1422,13 @@ def _station_fragility_boundary_assessment(
     schema_required = cast(list[str], probability_schema.get("required", []))
     schema_properties = cast(dict[str, Any], probability_schema.get("properties", {}))
     snapshot_events = cast(dict[str, Any], latest_snapshot.get("probability_judgment", {}))
-    audit_text = (root / "MATVIX_V3_AUDIT.md").read_text(encoding="utf-8")
+    manifest = read_json(root / "MATVIX_V3_RELEASE_MANIFEST.json")
+    scientific_evidence = manifest.get("scientific_evidence")
+    fragility_evidence = (
+        scientific_evidence.get("fragility_boundary")
+        if isinstance(scientific_evidence, dict)
+        else None
+    )
     event = REJECTED_FRAGILITY_EVENT_ID
     checks = {
         "event_order_absent": event not in EVENT_ORDER,
@@ -1433,17 +1439,24 @@ def _station_fragility_boundary_assessment(
         "schema_required_absent": event not in schema_required,
         "schema_property_absent": event not in schema_properties,
         "daily_snapshot_absent": event not in snapshot_events,
-        "rejection_evidence_retained": all(
-            token in audit_text for token in REJECTED_FRAGILITY_EVIDENCE_TOKENS
-        ),
+        "rejection_evidence_retained": fragility_evidence
+        == {
+            "event_id": event,
+            "formal_model_status": "NOT_ELIGIBLE",
+            "formal_model_pass_claimed": False,
+            "rejection_reason": "REJECTED_INSUFFICIENT_PUBLISHED_OOF",
+            "completed_published_oof": REJECTED_FRAGILITY_COMPLETED_OOF,
+            "required_published_oof": REJECTED_FRAGILITY_REQUIRED_OOF,
+            "candidate_artifact_sha256": REJECTED_FRAGILITY_ARTIFACT_SHA256,
+        },
     }
     return all(checks.values()), {
         "event_id": event,
         "checks": checks,
         "formal_model_status": "NOT_ELIGIBLE",
         "formal_model_pass_claimed": False,
-        "published_oof_completed": 114,
-        "required_published_oof": 252,
+        "published_oof_completed": REJECTED_FRAGILITY_COMPLETED_OOF,
+        "required_published_oof": REJECTED_FRAGILITY_REQUIRED_OOF,
         "adapter_shadow_counted_as_station_model": False,
     }
 

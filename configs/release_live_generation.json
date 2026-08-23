@@ -1,0 +1,60 @@
+{
+  "manifest_version": "1.0.0",
+  "generation_id": "MATVIX_V3_ACCEPTED_2026-08-20",
+  "latest_session": "2026-08-20",
+  "files": {
+    "cboe/SKEW_History.csv": {
+      "kind": "CBOE_INDEX_HISTORY",
+      "symbol": "SKEW",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "e79a88affc1d0044fed997428409c665b4c34f5ba38e36558e0ed87994e7eb31"
+    },
+    "cboe/SPX_History.csv": {
+      "kind": "CBOE_SPX_HISTORY",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "72be780a930b3f1327f2bf1aba90587cb50b0f946dcdea8b220e7fa384356957"
+    },
+    "cboe/VIX3M_History.csv": {
+      "kind": "CBOE_INDEX_HISTORY",
+      "symbol": "VIX3M",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "d182dfbfb9ac7e9932a0e9122e1445970549e7c9cd2ba95811d261aaf3ec2b20"
+    },
+    "cboe/VIX6M_History.csv": {
+      "kind": "CBOE_INDEX_HISTORY",
+      "symbol": "VIX6M",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "9a113ae129d228a74881fdd232d0093d8f0f2952437a5867e4c383a3a9628335"
+    },
+    "cboe/VIX9D_History.csv": {
+      "kind": "CBOE_INDEX_HISTORY",
+      "symbol": "VIX9D",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "12ce841ff50811e11b8643306a17cacdf7067986bc668decfa7359f47728a5a2"
+    },
+    "cboe/VIX_History.csv": {
+      "kind": "CBOE_INDEX_HISTORY",
+      "symbol": "VIX",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "b057ca2243f0fb022062a03258a9e68afca7708e19a564ceedf32735c4314dc0"
+    },
+    "cboe/VVIX_History.csv": {
+      "kind": "CBOE_INDEX_HISTORY",
+      "symbol": "VVIX",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "67b5852ae5d0aa41c78f241348559f468f87c4c06349c51f906ec09c692298ed"
+    },
+    "cfe/settlement_2026-08-19.csv": {
+      "kind": "CFE_DAILY_SETTLEMENT",
+      "session_date": "2026-08-19",
+      "ingested_at": "2026-08-20T12:53:21.433576+00:00",
+      "sha256": "796d6fb88ce0b573e2131a0d7bfaebcc6a74d84b6289008e64e7375ebf5bb7a0"
+    },
+    "cfe/settlement_2026-08-20.csv": {
+      "kind": "CFE_DAILY_SETTLEMENT",
+      "session_date": "2026-08-20",
+      "ingested_at": "2026-08-21T12:53:27.186224+00:00",
+      "sha256": "ce4693f52184ed7bf8b0b1d4281f1541d79d9ec689e9cd54ffb5a9bd262610d8"
+    }
+  }
+}

@@ -11,6 +11,7 @@ __pycache__/
 data/raw/vendor/
 data/raw/live/
 data/raw/economic_probe/
+data/raw/release_evidence/
 data/raw/*.parquet
 data/processed/
 data/probability/*

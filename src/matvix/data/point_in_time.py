@@ -217,13 +217,15 @@ def filter_as_of(observations: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing PIT columns: {sorted(missing)}")
     frame = observations.copy()
-    frame["available_at"] = pd.to_datetime(frame["available_at"], utc=True)
+    frame["available_at"] = pd.to_datetime(frame["available_at"], format="mixed", utc=True)
     cutoff = _utc_timestamp(as_of)
     frame = frame.loc[frame["available_at"] <= cutoff]
     frame = frame.loc[frame["vintage_kind"].isin(FORMAL_VINTAGES)]
     sort_columns = ["series_id", "session_date", "available_at"]
     if "ingested_at" in frame.columns:
-        frame["ingested_at"] = pd.to_datetime(frame["ingested_at"], utc=True)
+        frame["ingested_at"] = pd.to_datetime(
+            frame["ingested_at"], format="mixed", utc=True
+        )
         sort_columns.append("ingested_at")
     sort_columns.append("revision_id")
     frame = frame.sort_values(sort_columns, kind="stable")
@@ -256,7 +258,9 @@ def select_historical_point_in_time(
         raise ValueError(f"Missing historical PIT columns: {sorted(missing)}")
     selected = frame.copy()
     selected["session_date"] = pd.to_datetime(selected["session_date"]).dt.normalize()
-    selected["available_at"] = pd.to_datetime(selected["available_at"], utc=True)
+    selected["available_at"] = pd.to_datetime(
+        selected["available_at"], format="mixed", utc=True
+    )
     selected["_decision_as_of"] = selected["session_date"].map(
         lambda session: pd.Timestamp(decision_as_of(session)).tz_convert("UTC")
     )
@@ -266,7 +270,9 @@ def select_historical_point_in_time(
     keys = [*entity_columns, "session_date"]
     sort_columns = [*keys, "available_at"]
     if "ingested_at" in selected.columns:
-        selected["ingested_at"] = pd.to_datetime(selected["ingested_at"], utc=True)
+        selected["ingested_at"] = pd.to_datetime(
+            selected["ingested_at"], format="mixed", utc=True
+        )
         sort_columns.append("ingested_at")
     sort_columns.append("revision_id")
     selected = selected.sort_values(sort_columns, kind="stable")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import threading
@@ -24,6 +25,7 @@ from matvix.daily_update import (
     acceptance_receipt_path,
     assess_source_freshness,
     import_cboe_spx_history_bytes,
+    import_release_source_generation,
     last_good_session,
     latest_common_complete_session,
     load_source_manifest,
@@ -59,6 +61,78 @@ def _complete_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp]:
     observations = make_observations("2025-01-02", "2025-01-15")
     sessions = pd.DatetimeIndex(sorted(pd.to_datetime(observations["session_date"]).unique()))
     return observations, make_vx_history(sessions), sessions[-1]
+
+
+def _release_generation_fixture(root: Path) -> tuple[Path, Path]:
+    live = root / "live"
+    cboe = live / "cboe"
+    cfe = live / "cfe"
+    cboe.mkdir(parents=True)
+    cfe.mkdir(parents=True)
+    session = "2025-01-16"
+    files: dict[str, dict[str, str]] = {}
+    for symbol in ("VIX", "VIX9D", "VIX3M", "VIX6M", "VVIX", "SKEW"):
+        relative = f"cboe/{symbol}_History.csv"
+        content = (
+            f"DATE,OPEN,HIGH,LOW,CLOSE\n{session},18,20,17,19\n"
+            if symbol == "VIX"
+            else f"DATE,CLOSE\n{session},19\n"
+        ).encode()
+        target = live / relative
+        target.write_bytes(content)
+        files[relative] = {
+            "kind": "CBOE_INDEX_HISTORY",
+            "symbol": symbol,
+            "ingested_at": "2025-01-17T14:30:00+00:00",
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+    spx_relative = "cboe/SPX_History.csv"
+    spx_content = f"DATE,SPX\n{session},6000\n".encode()
+    (live / spx_relative).write_bytes(spx_content)
+    files[spx_relative] = {
+        "kind": "CBOE_SPX_HISTORY",
+        "ingested_at": "2025-01-17T14:30:00+00:00",
+        "sha256": hashlib.sha256(spx_content).hexdigest(),
+    }
+    cfe_relative = f"cfe/settlement_{session}.csv"
+    cfe_content = b"""Product,Symbol,Expiration Date,Price
+VX,VX/F5,2025-01-22,15.0
+VX,VX/G5,2025-02-19,16.0
+VX,VX/H5,2025-03-18,17.0
+VX,VX/J5,2025-04-16,18.0
+VX,VX/K5,2025-05-21,19.0
+VX,VX/M5,2025-06-18,20.0
+VX,VX/N5,2025-07-16,21.0
+"""
+    (live / cfe_relative).write_bytes(cfe_content)
+    files[cfe_relative] = {
+        "kind": "CFE_DAILY_SETTLEMENT",
+        "session_date": session,
+        "ingested_at": "2025-01-17T14:30:00+00:00",
+        "sha256": hashlib.sha256(cfe_content).hexdigest(),
+    }
+    manifest = root / "release_generation.json"
+    write_json(
+        {
+            "manifest_version": "1.0.0",
+            "generation_id": "TEST_RELEASE_GENERATION",
+            "latest_session": session,
+            "files": files,
+        },
+        manifest,
+    )
+    write_json(
+        {
+            "authorized_data_requirement": {
+                "live_generation_manifest_entries": len(files),
+                "live_generation_manifest_sha256": hashlib.sha256(
+                    manifest.read_bytes()
+                ).hexdigest(),
+            }
+        },
+        root / "MATVIX_V3_RELEASE_MANIFEST.json",
+    )
+    return live, manifest
 
 
 def _candidate(target: pd.Timestamp) -> DailyCandidate:
@@ -124,6 +198,43 @@ def test_freshness_requires_all_manifest_series_and_a_complete_vx_curve() -> Non
         stale.latest_complete_session
         == sessions_in_range("2025-01-02", target.date())[-2].date().isoformat()
     )
+
+
+def test_release_source_generation_is_verified_complete_and_idempotent(tmp_path: Path) -> None:
+    observations, vx, _ = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+    live, manifest = _release_generation_fixture(tmp_path)
+
+    first = import_release_source_generation(
+        paths,
+        live_root=live,
+        manifest_path=manifest,
+    )
+    second = import_release_source_generation(
+        paths,
+        live_root=live,
+        manifest_path=manifest,
+    )
+
+    assert first["verified_files"] == 8
+    assert first["added_observations"] == 10
+    assert first["added_vx_rows"] == 7
+    assert second["added_observations"] == 0
+    assert second["added_vx_rows"] == 0
+
+
+def test_release_source_generation_rejects_file_hash_drift(tmp_path: Path) -> None:
+    observations, vx, _ = _complete_inputs()
+    paths = _persist_inputs(tmp_path, observations, vx)
+    live, manifest = _release_generation_fixture(tmp_path)
+    (live / "cboe" / "VIX_History.csv").write_bytes(b"changed")
+
+    with pytest.raises(ValueError, match="sha256 mismatch: cboe/VIX_History.csv"):
+        import_release_source_generation(
+            paths,
+            live_root=live,
+            manifest_path=manifest,
+        )
 
 
 @pytest.mark.parametrize(

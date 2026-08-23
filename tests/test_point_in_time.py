@@ -211,3 +211,35 @@ def test_historical_selector_uses_effective_time_not_revision_hash_order() -> No
     selected = select_historical_point_in_time(frame, entity_columns=["series_id"])
 
     assert selected.iloc[0]["revision_id"] == "a-new"
+
+
+def test_pit_selectors_accept_mixed_iso8601_fractional_precision() -> None:
+    session = pd.Timestamp("2025-01-02")
+    frame = pd.DataFrame(
+        [
+            {
+                "series_id": "X",
+                "session_date": session,
+                "available_at": "2025-01-03T13:00:00+00:00",
+                "ingested_at": "2025-01-03T13:00:00+00:00",
+                "revision_id": "old",
+                "vintage_kind": "ASSUMED_PIT",
+                "value": 1.0,
+            },
+            {
+                "series_id": "X",
+                "session_date": session,
+                "available_at": "2025-01-03T13:01:00.123456+00:00",
+                "ingested_at": "2025-01-03T13:01:00.123456+00:00",
+                "revision_id": "new",
+                "vintage_kind": "ASSUMED_PIT",
+                "value": 2.0,
+            },
+        ]
+    )
+
+    historical = select_historical_point_in_time(frame, entity_columns=["series_id"])
+    current = filter_as_of(frame, datetime(2025, 1, 4, tzinfo=UTC))
+
+    assert historical["revision_id"].tolist() == ["new"]
+    assert current["revision_id"].tolist() == ["new"]

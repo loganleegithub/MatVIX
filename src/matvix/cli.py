@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -7,7 +8,7 @@ import sys
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import pandas as pd
 import typer
@@ -27,6 +28,7 @@ from matvix.daily_update import (
     DailyUpdateStatus,
     ProjectPublicationBusyError,
     frame_content_digest,
+    import_release_source_generation,
     project_publication_lock,
     read_update_status,
     refresh_official_sources,
@@ -78,6 +80,41 @@ def _paths(project_dir: Path) -> ProjectPaths:
 
 def _current_time() -> datetime:
     return datetime.now(UTC)
+
+
+def _verified_stage_d_comparator(root: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    manifest = read_json(root / "MATVIX_V3_RELEASE_MANIFEST.json")
+    scientific = cast(dict[str, Any], manifest.get("scientific_evidence", {}))
+    comparator = cast(dict[str, Any], scientific.get("stage_d_historical_comparator", {}))
+
+    def verified_path(name: str) -> tuple[Path, dict[str, Any]]:
+        spec = cast(dict[str, Any], comparator.get(name, {}))
+        raw_path = spec.get("path")
+        expected = spec.get("sha256")
+        if not isinstance(raw_path, str) or not isinstance(expected, str):
+            raise typer.BadParameter(f"Stage-D historical comparator {name} spec is missing")
+        relative = Path(raw_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise typer.BadParameter(f"Stage-D historical comparator {name} path is unsafe")
+        path = root / relative
+        try:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise typer.BadParameter(
+                f"Stage-D historical comparator {name} is unavailable: {path}"
+            ) from exc
+        if actual != expected:
+            raise typer.BadParameter(
+                f"Stage-D historical comparator {name} SHA-256 mismatch: {path}"
+            )
+        return path, spec
+
+    daily_path, daily_spec = verified_path("daily")
+    summary_path, _ = verified_path("summary")
+    daily = read_parquet(daily_path)
+    if len(daily) != int(daily_spec.get("rows", -1)):
+        raise typer.BadParameter("Stage-D historical comparator daily row count mismatch")
+    return daily, read_json(summary_path)
 
 
 @app.command("doctor")
@@ -149,7 +186,7 @@ def accept_v3_station(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
         oof=oof,
         snapshot=snapshot,
     )
-    phase_a_dir = paths.root / "outputs" / "v2_audit"
+    phase_a_daily, phase_a_summary = _verified_stage_d_comparator(paths.root)
     daily, summary = build_v3_station_acceptance(
         observations=observations,
         vx_contracts=vx_contracts,
@@ -158,8 +195,8 @@ def accept_v3_station(project_dir: ProjectDir = DEFAULT_PROJECT_DIR) -> None:
         targets=targets,
         oof=oof,
         real_acceptance=real_acceptance,
-        phase_a_daily=read_parquet(phase_a_dir / "business_audit_daily.parquet"),
-        phase_a_summary=read_json(phase_a_dir / "business_audit_summary.json"),
+        phase_a_daily=phase_a_daily,
+        phase_a_summary=phase_a_summary,
         latest_snapshot=snapshot,
         project_dir=paths.root,
     )
@@ -276,6 +313,28 @@ def import_data(
         typer.echo("Missing inputs (formal Cboe Core will remain incomplete):")
         for missing_path in missing:
             typer.echo(f"  - {missing_path}")
+
+
+@app.command("import-release-generation")
+def import_release_generation(
+    live_dir: Annotated[
+        Path,
+        typer.Option(help="Directory containing the authorized live-source generation."),
+    ],
+    manifest: Annotated[
+        Path,
+        typer.Option(help="Checksummed release-source generation manifest."),
+    ],
+    project_dir: ProjectDir = DEFAULT_PROJECT_DIR,
+) -> None:
+    """Overlay one frozen, offline live generation on the imported vendor baseline."""
+
+    result = import_release_source_generation(
+        _paths(project_dir),
+        live_root=live_dir,
+        manifest_path=manifest,
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
 @app.command("build-history")

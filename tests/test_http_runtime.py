@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import urllib.error
@@ -114,6 +115,29 @@ def test_each_candidate_uses_its_own_receipt_binding(tmp_path: Path) -> None:
 
     assert latest is not None
     assert latest.session_date == "2026-08-19"
+
+
+@pytest.mark.parametrize("damaged_file", ["snapshot", "receipt"])
+def test_corrupt_newest_publication_falls_back_to_last_good(
+    tmp_path: Path,
+    damaged_file: str,
+) -> None:
+    _publish(tmp_path, "2026-08-18")
+    _publish(tmp_path, "2026-08-19")
+    damaged_path = (
+        tmp_path / "outputs" / "daily" / "2026-08-19.json"
+        if damaged_file == "snapshot"
+        else tmp_path / "artifacts" / "acceptance" / "real_acceptance_2026-08-19.json"
+    )
+    damaged_path.write_bytes(b'{"session_date":')
+
+    with DashboardHTTPRuntime(tmp_path, port=0, renderer=_renderer) as runtime:
+        status = _json_request(runtime, "/api/status")
+        snapshot = _json_request(runtime, "/api/snapshot")
+
+    assert status["runtime_status"] == "RUNNING"
+    assert status["last_good_session"] == "2026-08-18"
+    assert snapshot["session_date"] == "2026-08-18"
 
 
 def test_touched_old_receipt_cannot_authorize_replaced_snapshot(tmp_path: Path) -> None:
@@ -554,3 +578,21 @@ def test_runtime_validates_port_and_poll_interval(tmp_path: Path) -> None:
     for factory in factories:
         with pytest.raises(ValueError):
             factory()
+
+
+def test_second_dashboard_instance_cannot_replace_running_instance(tmp_path: Path) -> None:
+    _publish(tmp_path, "2026-08-18")
+
+    with DashboardHTTPRuntime(tmp_path, port=0, renderer=_renderer) as primary:
+        second = DashboardHTTPRuntime(
+            tmp_path,
+            host=primary.address[0],
+            port=primary.address[1],
+            renderer=_renderer,
+        )
+        with pytest.raises(OSError) as error:
+            second.start()
+
+        assert error.value.errno == errno.EADDRINUSE
+        assert second.is_running is False
+        assert _json_request(primary, "/api/status")["runtime_status"] == "RUNNING"

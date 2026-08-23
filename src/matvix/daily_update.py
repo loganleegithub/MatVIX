@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 import numpy as np
 import pandas as pd
@@ -713,6 +713,170 @@ def _merge_and_write(
     if changed:
         write_parquet(merged, path)
     return changed
+
+
+def _release_generation_timestamp(value: object, *, relative_path: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"release generation ingested_at is missing: {relative_path}")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"release generation ingested_at is invalid: {relative_path}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"release generation ingested_at must be timezone-aware: {relative_path}")
+    return parsed.astimezone(UTC)
+
+
+def import_release_source_generation(
+    paths: ProjectPaths,
+    *,
+    live_root: str | Path,
+    manifest_path: str | Path,
+) -> dict[str, str | int]:
+    """Import one checksummed, offline live-source generation over the vendor baseline."""
+
+    if not paths.observations.exists() or not paths.vx_contracts.exists():
+        raise ValueError("release generation requires an imported vendor baseline")
+    source_manifest_path = Path(manifest_path)
+    release_manifest = read_json(paths.root / "MATVIX_V3_RELEASE_MANIFEST.json")
+    authorized_data = release_manifest.get("authorized_data_requirement")
+    if not isinstance(authorized_data, dict):
+        raise ValueError("release authorized-data requirement is missing")
+    expected_manifest_sha256 = authorized_data.get("live_generation_manifest_sha256")
+    expected_manifest_entries = authorized_data.get("live_generation_manifest_entries")
+    if not isinstance(expected_manifest_sha256, str) or not isinstance(
+        expected_manifest_entries, int
+    ):
+        raise ValueError("release live-generation identity is missing")
+    try:
+        actual_manifest_sha256 = hashlib.sha256(source_manifest_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ValueError("release source generation manifest is unavailable") from exc
+    if actual_manifest_sha256 != expected_manifest_sha256:
+        raise ValueError("release source generation manifest SHA-256 mismatch")
+    manifest = read_json(source_manifest_path)
+    if manifest.get("manifest_version") != "1.0.0":
+        raise ValueError("unsupported release source generation manifest")
+    generation_id = manifest.get("generation_id")
+    latest_session = manifest.get("latest_session")
+    raw_files = manifest.get("files")
+    if not isinstance(generation_id, str) or not generation_id:
+        raise ValueError("release source generation_id is missing")
+    if not isinstance(latest_session, str):
+        raise ValueError("release source latest_session is missing")
+    try:
+        parsed_latest = datetime.strptime(latest_session, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise ValueError("release source latest_session must be YYYY-MM-DD") from exc
+    if parsed_latest != latest_session:
+        raise ValueError("release source latest_session must be canonical YYYY-MM-DD")
+    if not isinstance(raw_files, dict) or not raw_files:
+        raise ValueError("release source generation files are missing")
+    if len(raw_files) != expected_manifest_entries:
+        raise ValueError("release source generation manifest entry count mismatch")
+
+    observations = read_parquet(paths.observations)
+    vx_contracts = read_parquet(paths.vx_contracts)
+    observation_frames: list[pd.DataFrame] = []
+    vx_frames: list[pd.DataFrame] = []
+    seen_symbols: set[str] = set()
+    seen_spx = False
+    cfe_sessions: set[str] = set()
+    root = Path(live_root).resolve()
+    files = cast(dict[str, Any], raw_files)
+
+    for relative_name, raw_spec in sorted(files.items()):
+        if not isinstance(raw_spec, dict):
+            raise ValueError(f"release source file spec must be an object: {relative_name}")
+        relative = Path(relative_name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"release source path is unsafe: {relative_name}")
+        source_path = root / relative
+        try:
+            content = source_path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"release source file is unavailable: {relative_name}") from exc
+        expected_sha256 = raw_spec.get("sha256")
+        if not isinstance(expected_sha256, str) or re.fullmatch(
+            r"[0-9a-f]{64}", expected_sha256
+        ) is None:
+            raise ValueError(f"release source sha256 is invalid: {relative_name}")
+        actual_sha256 = hashlib.sha256(content).hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise ValueError(f"release source sha256 mismatch: {relative_name}")
+        ingested_at = _release_generation_timestamp(
+            raw_spec.get("ingested_at"), relative_path=relative_name
+        )
+        kind = raw_spec.get("kind")
+
+        if kind == "CBOE_INDEX_HISTORY":
+            symbol = raw_spec.get("symbol")
+            if not isinstance(symbol, str) or symbol not in SUPPORTED_SYMBOLS:
+                raise ValueError(f"release Cboe symbol is invalid: {relative_name}")
+            if relative.as_posix() != f"cboe/{symbol}_History.csv" or symbol in seen_symbols:
+                raise ValueError(f"release Cboe identity is invalid: {relative_name}")
+            observation_frames.append(
+                import_cboe_history(source_path, symbol, ingested_at=ingested_at)
+            )
+            seen_symbols.add(symbol)
+        elif kind == "CBOE_SPX_HISTORY":
+            if relative.as_posix() != "cboe/SPX_History.csv" or seen_spx:
+                raise ValueError(f"release SPX identity is invalid: {relative_name}")
+            start_session = _spx_start_session(
+                observations, vx_contracts, pd.Timestamp(latest_session)
+            )
+            observation_frames.append(
+                import_cboe_spx_history_bytes(
+                    content,
+                    start_session=start_session,
+                    end_session=latest_session,
+                    ingested_at=ingested_at,
+                )
+            )
+            seen_spx = True
+        elif kind == "CFE_DAILY_SETTLEMENT":
+            session = raw_spec.get("session_date")
+            if not isinstance(session, str):
+                raise ValueError(f"release CFE session is missing: {relative_name}")
+            if relative.as_posix() != f"cfe/settlement_{session}.csv" or session in cfe_sessions:
+                raise ValueError(f"release CFE identity is invalid: {relative_name}")
+            vx_frames.append(
+                parse_cfe_daily_settlement_csv(content, session, ingested_at=ingested_at)
+            )
+            cfe_sessions.add(session)
+        else:
+            raise ValueError(f"release source kind is invalid: {relative_name}")
+
+    if seen_symbols != set(SUPPORTED_SYMBOLS) or not seen_spx:
+        raise ValueError("release source generation does not cover the full Cboe Core")
+    if latest_session not in cfe_sessions:
+        raise ValueError("release source generation lacks latest-session CFE settlement")
+
+    incoming_observations = pd.concat(observation_frames, ignore_index=True)
+    incoming_vx = pd.concat(vx_frames, ignore_index=True)
+    merged_observations = merge_revision_history(
+        observations,
+        incoming_observations,
+        entity_columns=["series_id"],
+    )
+    merged_vx = merge_revision_history(
+        vx_contracts,
+        incoming_vx,
+        entity_columns=["contract_id"],
+    )
+    if len(merged_observations) != len(observations):
+        write_parquet(merged_observations, paths.observations)
+    if len(merged_vx) != len(vx_contracts):
+        write_parquet(merged_vx, paths.vx_contracts)
+    return {
+        "generation_id": generation_id,
+        "latest_session": latest_session,
+        "verified_files": len(files),
+        "observations": len(merged_observations),
+        "vx_rows": len(merged_vx),
+        "added_observations": len(merged_observations) - len(observations),
+        "added_vx_rows": len(merged_vx) - len(vx_contracts),
+    }
 
 
 def refresh_official_sources(

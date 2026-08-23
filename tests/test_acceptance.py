@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,7 @@ from matvix.constants import EVENT_ORDER
 from matvix.output import build_daily_output
 from matvix.probability.targets import add_carry_duration_facts
 from matvix.probability.walk_forward import ProbabilitySpec
+from matvix.storage import read_json, write_json
 
 
 def _event(
@@ -394,15 +396,22 @@ def test_station_base_rate_reference_is_separate_from_model_pass() -> None:
     assert _station_base_rate_reference_assessment(calibration, model_evidence, broken)[0] is False
 
 
-def test_station_fragility_boundary_requires_absence_and_retained_rejection() -> None:
-    root = Path(__file__).resolve().parents[1]
+def test_station_fragility_boundary_requires_absence_and_retained_rejection(
+    tmp_path: Path,
+) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    schema = tmp_path / "schemas" / "daily_output.schema.json"
+    schema.parent.mkdir(parents=True)
+    shutil.copyfile(project_root / "schemas" / "daily_output.schema.json", schema)
+    manifest = read_json(project_root / "MATVIX_V3_RELEASE_MANIFEST.json")
+    write_json(manifest, tmp_path / "MATVIX_V3_RELEASE_MANIFEST.json")
     states = pd.DataFrame({"session_date": pd.to_datetime(["2026-08-20"])})
     targets = pd.DataFrame({"event_id": ["acute_front_stress_5d"]})
     oof = pd.DataFrame({"event_id": ["acute_front_stress_5d"]})
     snapshot = {"probability_judgment": {"acute_front_stress_5d": {}}}
 
     passed, evidence = _station_fragility_boundary_assessment(
-        project_dir=root,
+        project_dir=tmp_path,
         states=states,
         targets=targets,
         oof=oof,
@@ -415,11 +424,26 @@ def test_station_fragility_boundary_requires_absence_and_retained_rejection() ->
     contaminated["probability_judgment"]["calm_carry_breaks_5d"] = {}
     assert (
         _station_fragility_boundary_assessment(
-            project_dir=root,
+            project_dir=tmp_path,
             states=states,
             targets=targets,
             oof=oof,
             latest_snapshot=contaminated,
+        )[0]
+        is False
+    )
+    broken_manifest = copy.deepcopy(manifest)
+    broken_manifest["scientific_evidence"]["fragility_boundary"][
+        "completed_published_oof"
+    ] = 115
+    write_json(broken_manifest, tmp_path / "MATVIX_V3_RELEASE_MANIFEST.json")
+    assert (
+        _station_fragility_boundary_assessment(
+            project_dir=tmp_path,
+            states=states,
+            targets=targets,
+            oof=oof,
+            latest_snapshot=snapshot,
         )[0]
         is False
     )

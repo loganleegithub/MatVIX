@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pytest
 from typer.testing import CliRunner
 
 import matvix.cli as cli
@@ -12,7 +14,40 @@ from matvix.config_contract import ConfigContractReport
 from matvix.daily_update import project_publication_lock, with_snapshot_publication_binding
 from matvix.http_runtime import find_latest_accepted_snapshot
 from matvix.pipeline import ProjectPaths
-from matvix.storage import read_json, write_json
+from matvix.storage import read_json, write_json, write_parquet
+
+
+def test_stage_d_comparator_is_content_bound_and_rejects_damage(tmp_path: Path) -> None:
+    daily_path = tmp_path / "evidence" / "daily.parquet"
+    summary_path = tmp_path / "evidence" / "summary.json"
+    write_parquet(pd.DataFrame({"session_date": ["2026-08-20"]}), daily_path)
+    write_json({"status": "FROZEN"}, summary_path)
+    write_json(
+        {
+            "scientific_evidence": {
+                "stage_d_historical_comparator": {
+                    "daily": {
+                        "path": "evidence/daily.parquet",
+                        "sha256": hashlib.sha256(daily_path.read_bytes()).hexdigest(),
+                        "rows": 1,
+                    },
+                    "summary": {
+                        "path": "evidence/summary.json",
+                        "sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+                    },
+                }
+            }
+        },
+        tmp_path / "MATVIX_V3_RELEASE_MANIFEST.json",
+    )
+
+    daily, summary = cli._verified_stage_d_comparator(tmp_path)
+    assert len(daily) == 1
+    assert summary == {"status": "FROZEN"}
+
+    summary_path.write_bytes(b"damaged")
+    with pytest.raises(cli.typer.BadParameter, match="summary SHA-256 mismatch"):
+        cli._verified_stage_d_comparator(tmp_path)
 
 
 def _stub_acceptance_chain(

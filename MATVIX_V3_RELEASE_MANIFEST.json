@@ -1,9 +1,9 @@
 {
-  "manifest_version": "1.0.0",
+  "manifest_version": "1.1.0",
   "release": {
     "name": "MatVIX V3",
-    "release_ref": "matvix-v3.0.0",
-    "package_version": "3.0.0",
+    "release_ref": "matvix-v3.0.1",
+    "package_version": "3.0.1",
     "model_id": "MATVIX_CBOE_CORE_V3",
     "schema_version": "3.0.0",
     "feature_version": "3.0.0",
@@ -17,8 +17,37 @@
     "historical_economic_result": "HISTORICAL_RESEARCH_SUPPORT",
     "production_promotion_claimed": false
   },
+  "release_closure": {
+    "status": "RESEARCH_STATION_READY",
+    "operating_mode": "READ_ONLY",
+    "trading_authority": "NONE",
+    "historical_core": "ACCEPTED",
+    "prospective_confirmation": "PENDING"
+  },
+  "release_verification": {
+    "verified_on": "2026-08-23",
+    "environment": "ISOLATED_CLEAN_SOURCE_EXPORT_FRESH_VENV",
+    "platform": "macOS 26.5.1 arm64",
+    "python": "3.12.13",
+    "authorized_input_identities": 194,
+    "rebuild_status": "PASS",
+    "byte_identical_release_artifacts": 10,
+    "pytest": {
+      "status": "PASS",
+      "collected": 247
+    },
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "doctor": "PASS",
+    "runtime_smoke": {
+      "runtime_status": "RUNNING",
+      "product_status": "READY",
+      "trading_authorized": false,
+      "last_good_session": "2026-08-20"
+    }
+  },
   "git_identity": {
-    "resolution": "git rev-parse matvix-v3.0.0^{commit} matvix-v3.0.0^{tree}",
+    "resolution": "git rev-parse matvix-v3.0.1^{commit} matvix-v3.0.1^{tree}",
     "note": "The local annotated release tag fixes the final commit and tree without a self-referential manifest hash."
   },
   "runtime": {
@@ -47,6 +76,9 @@
     "vendor_manifest_path": "data/raw/vendor/audit/SHA256SUMS.txt",
     "vendor_manifest_entries": 183,
     "vendor_manifest_sha256": "306b45363fb0d8415eda21ce786524972d8514f110fc8f8d9d402dbb6c1e7df6",
+    "live_generation_manifest_path": "configs/release_live_generation.json",
+    "live_generation_manifest_entries": 9,
+    "live_generation_manifest_sha256": "6143f54f8e0639e7de430ff0cd35333160c603f0c70fa7d85af85af641176782",
     "required_series": [
       "VIX_OPEN",
       "VIX_HIGH",
@@ -74,6 +106,29 @@
     "accepted_snapshot_count": 1
   },
   "scientific_evidence": {
+    "stage_d_historical_comparator": {
+      "classification": "FROZEN_HISTORICAL_COMPARATOR",
+      "current_runtime_authority": false,
+      "required_authorized_evidence": true,
+      "daily": {
+        "path": "data/raw/release_evidence/v3_stage_d/historical_comparator_daily.parquet",
+        "sha256": "c87e4c2f4be4c5c5ad2a4a4d251ba9f3bb758a5caa4e0549f3f7baf6e680c01f",
+        "rows": 3334
+      },
+      "summary": {
+        "path": "data/raw/release_evidence/v3_stage_d/historical_comparator_summary.json",
+        "sha256": "a3d587761ed6f83a4bae17ac55dfe2560c5c3750f86c0597949e387ee1bf66b3"
+      }
+    },
+    "fragility_boundary": {
+      "event_id": "calm_carry_breaks_5d",
+      "formal_model_status": "NOT_ELIGIBLE",
+      "formal_model_pass_claimed": false,
+      "rejection_reason": "REJECTED_INSUFFICIENT_PUBLISHED_OOF",
+      "completed_published_oof": 114,
+      "required_published_oof": 252,
+      "candidate_artifact_sha256": "44e7e43efb207b8b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770"
+    },
     "stage_d": {
       "status": "PASS",
       "dimensions": [

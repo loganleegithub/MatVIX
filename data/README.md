@@ -16,8 +16,11 @@ Accepted input coverage:
   forward-filled or replaced with `Close`.
 
 The original authorized vendor bundle has a byte-level inventory and 183
-accepted checksums. Later immutable live revisions remain local and are admitted
-through the same source-identity and point-in-time rules.
+accepted checksums. The accepted 2026-08-19/20 live generation remains local;
+`configs/release_live_generation.json` records its nine file identities and original
+ingestion timestamps without redistributing the files. `matvix import-release-generation`
+verifies and admits that generation through the same source-identity and point-in-time
+rules.
 
 - `data/raw/vendor/audit/inventory.json`
 - `data/raw/vendor/audit/SHA256SUMS.txt`
