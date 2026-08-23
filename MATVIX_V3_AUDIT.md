@@ -8,10 +8,10 @@
 > 原合同提交：`b1394e7aa87de3e37648ed6fd61e47a33cf22df8`
 > 合同修订提交：`6eaa18b4bd21fc6851eb2e22c2234740a5a166b0`
 > v1.2 修订提交：`1c7981eeaad5b8a967f816530f3750fe35ca4880`
-> v1.3 修订提交：本次纯文档冻结提交（以 Git 历史为准）
-> 当前裁决：`STAGE_F=ONE_RUN_COMPLETE / ECONOMIC_VERDICT=NO_COMPREHENSIVE_INCREMENT`
-> 下一项：`RECORD FINAL ATTRIBUTION AND PROSPECTIVE BOUNDARY; NO SECOND RUN`
-> 最高允许结论：`HISTORICAL_RESEARCH_SUPPORT / RESEARCH_SHADOW_READY / NO_PRODUCTION_PROMOTION`
+> v1.3 修订提交：`281e29aec7fb042311824fc4ac3f5555de6e5ddd`
+> 当前裁决：`ADAPTER-002=REJECTED_BY_FROZEN_HISTORICAL_PROBE`
+> 下一项：`CURRENT CONTRACT STOPPED / PROSPECTIVE OBSERVATION ONLY`
+> 最终结论：`NO_COMPREHENSIVE_INCREMENT / NO_PRODUCTION_PROMOTION`
 
 ---
 
@@ -1692,3 +1692,99 @@ outputs/v3_economic_probe/report.html       300dbf179bd90029421d6d20278d52f1e73d
 三个输出受存在性保护；不得删除、覆盖或运行第二次经济命令。以上结果不改变
 `PROB-FRAGILITY-002=FORMAL_REJECT_RETAINED_114_OF_252`，也不改变四模型加一个 Broad 基准率引用的
 正式气象站表面。
+
+### 16.2 经济归因与最终裁决
+
+唯一适配器造成 43 个逐日资产差异，全部为合同允许的 `SVXY -> SGOV`，没有任何反向增仓或 Long
+变化。但这 43 次 veto 在最差 20 个 SVXY open-to-open sessions 中命中数为 **0**。Short 的
+Worst-20D 两值落在同一 `2024-09-18` outcome-through 窗口；窗口内资产、turnover 与 gross return
+完全相同，veto 日为 0，所谓“严格改善”仅约 `+2.2e-16` 的浮点尾差。Combined 的 Worst-20D 也落在
+同一 `2024-09-04` 窗口，经济上相同，约 `-1.1e-16` 的浮点尾差令机械门为假。既不事后加 tolerance，
+也不把任一尾差解释为真实风险变化。
+
+Short final NAV 提高 `$222.77` 的同时，累计成本减少约 `$268.08`，但 gross final NAV 反而减少
+约 `$54.60`；Combined final NAV 提高 `$226.82`，累计成本减少约 `$255.85`，gross final NAV 反而
+减少约 `$58.50`。主要增量来自减少切换与成本，而不是候选在最差 SVXY 日前识别了脆弱性。
+
+Combined 的实质失败是 MaxDD：
+
+- V2 从 `2024-01-11` 的峰值 `$11,131.53` 跌至 `2024-09-23` 的 `$8,797.46`，MaxDD `-20.9681%`；
+- V3 从较晚的 `2024-05-02` 峰值 `$11,438.34` 跌至同一 `2024-09-23` 的 `$8,956.17`，MaxDD
+  `-21.7004%`。
+
+V3 的绝对谷值虽然更高，但其此前峰值也更高，按冻结的相对 drawdown 定义仍明确更差。Short
+自身的 MaxDD 从 `-16.1332%` 改善为 `-13.9655%`，不能覆盖 Combined 的合同失败。故不接受
+“Short 单项通过”替代三探针联合门，最终裁决冻结为：
+
+```text
+STAGE_F=COMPLETE_EXACTLY_ONE_RUN
+ECONOMIC_VERDICT=NO_COMPREHENSIVE_INCREMENT
+ADAPTER-002=REJECTED_BY_FROZEN_HISTORICAL_PROBE
+PROB-FRAGILITY-002=FORMAL_REJECT_RETAINED_114_OF_252
+FORMAL_STATION=FOUR_FEATURE_CONDITIONAL_PLUS_BROAD_BASE_RATE_REFERENCE
+SECOND_ECONOMIC_RUN=FORBIDDEN
+MAPPING_OR_THRESHOLD_CHANGE=FORBIDDEN_UNDER_V1_3
+NO_MERGE
+NO_PUSH
+NO_PRODUCTION_PROMOTION
+```
+
+### 16.3 前向观察边界
+
+价格盲 adapter 冻结提交发生于 `2026-08-23`，冻结价格 outcome 只到 `2026-08-20`，因此当前没有
+任何合法的 post-freeze 完整共同 session。现建立 header-only、append-only 前向账本
+`data/prospective/v3_fragility_shadow_ledger.csv` 与约束说明 `data/prospective/README.md`；数据行数为 0，
+不回填任何历史行。
+
+该账本只允许被动记录拒绝候选的 counterfactual research observation，不授予 Short 暴露、交易、
+模型资格、历史裁决翻案或 promotion 权限。未来第一行必须来自冻结提交之后当时可得的 signal、score、
+position、price、cost 与完成 outcome；既有行不得修改或删除。若人类将来要重新裁决 adapter，必须先
+另立 power/evidence 合同并预先冻结观察长度、独立 stress/fragility 簇数与裁决门，不能使用本次历史
+结果事后选择规则。
+
+```text
+PROSPECTIVE_LEDGER=ESTABLISHED_EMPTY_APPEND_ONLY
+PROSPECTIVE_ROWS=0
+FIRST_ELIGIBLE_POST_FREEZE_SESSION=NOT_YET_OBSERVED
+OBSERVATION_MODE=COUNTERFACTUAL_RESEARCH_ONLY
+TRADING_AUTHORITY=NONE
+CURRENT_CONTRACT_VERDICT=IMMUTABLE_NO_COMPREHENSIVE_INCREMENT
+```
+
+### 16.4 最终回归与交付状态
+
+第 16.2/16.3 节冻结后，按合同第 11 节运行全量 pytest、Ruff、正式 Mypy 范围、doctor、history
+重建、概率 full rebuild 与 V3 Stage D 再验收。pytest 退出 0（缓存记录 287 个 collected node ids）；
+Ruff 全绿；Mypy 对 45 个 `src/matvix` source files 为 `Success`；doctor 的锁定依赖与四个本地数据
+artifact 全部 PASS/FOUND。history 为 3,334 行，`OK/PARTIAL=2,803/531`。
+
+Stage D 最终重放结果为：
+
+```text
+DATA=PASS
+TENOR=PASS
+STATE_TIMING=PASS
+PROBABILITY_INTEGRITY=PASS
+PROBABILITY_MODEL=PASS
+BASE_RATE_REFERENCE=PASS
+FRAGILITY_BOUNDARY=PASS
+STAGE_E_ENTRY=PASS
+```
+
+正式 artifacts、Stage D 输出与唯一经济输出 SHA-256 均未漂移：
+
+```text
+states.parquet                          8a31d30124b616d073ff780363dbef6705a5aa6a7500e6c0569783e16ad2d7b4
+target_ledger.parquet                   fb91968643c2b65fa28f72fa77ca485cb4db934c1e59d20fb554cf2d00939913
+oof_ledger.parquet                      330476772918f52d1d588577ea337bd7b6ed596a3049294716e3c14dfa34f820
+artifact_contract.json                  533111ad28b43b41fa16c604bb4d6e098e5199805eccf7d09895ada0487c7a93
+v3_station_acceptance/daily             24de7e129cf2349bc18bc3aef697986af4c77184ea017c7dc2ad9423b049a7ef
+v3_station_acceptance/summary           54b4c4dd73c4f3f380e90981015b3499bd6a67fe4328c08f44bc97e7e93eba93
+v3_station_acceptance/report            10b1c08a6a547c85864a7319ccfe977aa2e42a0842479eb1c27ecd8b79a35fcd
+v3_economic_probe/daily_ledger.csv       2262667420ba371d25d552959b918d4ca53abae4c7293bd14b1192f568b5321e
+v3_economic_probe/report.json            5c6ff064bb1d5a63153967656aac33d1c7f707db006eb1c31e70833370c5a8b5
+v3_economic_probe/report.html            300dbf179bd90029421d6d20278d52f1e73d96a202c0d7ad7568186a367f714a
+```
+
+最终分支为 `codex/matvix-v3`；`main` 与 `origin/main` 仍共同停在
+`6ac5b93b8d6f9fbd66807f9aaa0779e9214934e5`。没有合并、推送、第二次经济诊断或 production promotion。
