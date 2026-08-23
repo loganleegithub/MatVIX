@@ -585,7 +585,7 @@ published OOF，其中 114 条已 outcome-available，正/负为 44/70。正式�
 ```text
 states.parquet             e22b51acccaea60f97dcfe98ce561ae700b87e1239a5ca66c8f6674e5f8c4d16
 target_ledger.parquet      9e77c5be6e2f4a2b387d877b7f5184376f922301a2585077f0704382a920523e
-oof_ledger.parquet         44e7e43efb207b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770
+oof_ledger.parquet         44e7e43efb207b8b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770
 artifact_contract.json     42e54a87ab5d365ea3cf90dbd9bfa513d0b9a3456e8fa08c3a11f42f7a3dba00
 daily/2026-08-20.json      d24de3122be8fdd060d07b8f9d9bec7f03c65eec15bd3f19e678168653360eef
 real_acceptance.json       54c8d59d9052de39c5d1fe90e3ba07cb987eb45942a36818ce9950e52a325f31
@@ -1447,8 +1447,15 @@ rolling intercept = prior max 252 / min classes=20/20 / slope=1 /
 唯一冻结候选的完整正式 OOF hash 继续为：
 
 ```text
-44e7e43efb207b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770
+44e7e43efb207b8b8b56ee20a9c0ab18229046ac2e73eb6dd7d05b4c1c770770
 ```
+
+阶段 E 的首次价格盲重放发现，第 11.1 节原转录值只有 62 个十六进制字符，不可能是 SHA-256；
+缺失的是相邻的 `b8` 两位。勘误前先完成两条锁定运行时交叉验证：现行五事件 OOF 全量内存重建
+精确命中 `330476772918f52d1d588577ea337bd7b6ed596a3049294716e3c14dfa34f820`；加入唯一候选后命中
+上述 64 位 OOF hash。同时，加入候选并按 canonical event/date 排序的 target ledger 精确命中既有
+`9e77c5be6e2f4a2b387d877b7f5184376f922301a2585077f0704382a920523e`。本次只纠正证据转录，未改变
+任何 row、feature、label、score、模型、窗口、阈值、门槛或 adapter spec hash。
 
 候选当时有 371 个完成 label（158/213）、115 个因果 score rows；其中 114 个 label 已完成
 （44/70），首个 score session 为 2023-06-16。adapter 可在 signal t 使用当时已存在且有限的
