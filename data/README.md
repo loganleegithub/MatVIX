@@ -1,37 +1,30 @@
 # MatVIX local data
 
-The runtime tables, vendor files and prospective observations in this directory
-are local artifacts unless explicitly tracked. The accepted source generations
-come from official Cboe index and CFE historical-data endpoints.
+Vendor bytes, normalized tables, model ledgers and prospective observations are machine-local
+unless a file is explicitly tracked. Do not copy changing row counts or latest dates into this
+document; inspect the data or runtime status at the time of use.
 
-Accepted input coverage:
-
-- Cboe VIX, VIX9D, VIX3M, VIX6M, VVIX, SKEW, and SPX histories;
-- 172 standard-monthly CFE VX contract files, January 2013 through April 2027;
-- normalized V3 state history from 2013-05-20 through 2026-08-20 (3,334 XNYS
-  sessions: 2,803 `OK`, 531 `PARTIAL`);
-- four source SKEW gaps are preserved as missing: 2017-09-14, 2018-12-03,
-  2019-07-05, and 2024-11-29;
-- 852 official CFE `Settle=0` rows are invalid observations and must not be
-  forward-filled or replaced with `Close`.
-
-The original authorized vendor bundle has a byte-level inventory and 183
-accepted checksums. The accepted 2026-08-19/20 live generation remains local;
-`configs/release_live_generation.json` records its nine file identities and original
-ingestion timestamps without redistributing the files. `matvix import-release-generation`
-verifies and admits that generation through the same source-identity and point-in-time
-rules.
-
-- `data/raw/vendor/audit/inventory.json`
-- `data/raw/vendor/audit/SHA256SUMS.txt`
-
-Run the checksum command from `data/raw/vendor` because manifest paths are
-relative:
-
-```bash
-shasum -a 256 -c audit/SHA256SUMS.txt
+```text
+raw/vendor/     entitled or public source bytes; never committed or redistributed
+raw/live/       bounded live source generation used by the V3 runtime
+processed/      rebuildable normalized product tables
+probability/    rebuildable V3 target and OOF artifacts
+prospective/    local append-only V3 prediction/outcome evidence
 ```
 
-Official public download endpoints do not by themselves grant unrestricted
-commercial redistribution rights.  Keep raw files local and confirm the
-project owner's Cboe data licence before professional or commercial use.
+E15 historical research data is also local only:
+
+```text
+raw/vendor/e15_measurement_state/
+raw/vendor/e15_h3_preopen_feasibility/
+raw/vendor/e15_h3_q1m/
+```
+
+The QuantConnect directory contains locally retained cloud-result bytes for backtesting and audit;
+it is not a redistribution surface. Historical QuoteBar exchange time is not exact-tick age,
+MatVIX receipt time or an executable quote.
+
+For the frozen V3 product, `configs/source_manifest.yaml`,
+`configs/release_live_generation.json` and `MATVIX_V3_RELEASE_MANIFEST.json` define the required
+source identities. Preserve missing, invalid, stale and censored observations; never forward-fill
+them to make a research gate pass.

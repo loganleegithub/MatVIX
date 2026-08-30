@@ -37,11 +37,11 @@ separate activation boundary, `matvix-prospective-001-activation`. The frozen sc
 Feature, State, Probability and Schema surface remains `3.0.0`; the recorder changes no
 model, threshold or probability contract.
 
-The full repository freeze is bound by `matvix-v3-final-freeze-2026-08-24`. The single
-normative guide for an external strategy or AI agent is
-`MATVIX_V3_EXTERNAL_STRATEGY_CONSUMER.md`; it also records the P6 closure and the boundary
-between frozen repository bytes and append-only runtime evidence. The P0 Power Design and
-P5 Acceptance files remain stage-specific audit evidence, not current P6 status pages.
+The full V3 repository freeze is bound by `matvix-v3-final-freeze-2026-08-24`. Its exact legacy
+consumer contract remains available from that tag; this E15 research checkout deliberately grants
+no new consumer or strategy authority. The P0 Power Design and P5 Acceptance files remain
+stage-specific audit evidence in [`docs/archive/prospective-001/`](docs/archive/prospective-001/),
+not current P6 status pages.
 
 ## Frozen V3 surface
 
