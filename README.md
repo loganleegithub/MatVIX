@@ -19,18 +19,10 @@ trading permission.
 
 ## Active research
 
-V3 remains the current product surface. Full-amplitude Severity is no longer on the active alpha
-roadmap. The sole post-V3 research object is now actionable E15 occurrence: a calibrated probability
-of the existing five-session E15 first passage, with all-state weather scoring and a primary action
-test only while valid contango still permits short-vol exposure. The active brief proposes a causal
-EOD prior plus a separately scored 09:20 ET overnight posterior, using genuinely new sensor
-hypotheses rather than another model search. It is design-only, not frozen or fitted; see
-[`docs/research/e15-actionable-occurrence-research.md`](docs/research/e15-actionable-occurrence-research.md).
-
-The complete V4/Severity runners, focused tests, historical contracts and reports are isolated on
-`codex/v4-severity-reset-audit`. Their bounded conclusions remain summarized in
-[`docs/project-handoff.md`](docs/project-handoff.md); they are not callable paths or local document
-dependencies on this E15 branch.
+E15 is an independent research-only object. Its current scientific state and next authorized stage live
+only in [`docs/research/e15-probability-frontier.md`](docs/research/e15-probability-frontier.md); it changes
+no V3 product, adapter, position, order or trading authority. The
+[`handoff`](docs/project-handoff.md) is navigation only.
 
 The scientific core release tag is `matvix-v3.0.1`. Prospective evidence capture has a
 separate activation boundary, `matvix-prospective-001-activation`. The frozen scientific

@@ -177,3 +177,7 @@ artifacts/research_archive/e15_2026_08/    retired runner/test/document snapshot
 
 这些路径被 Git 忽略，只限本机研究使用，不对外分发。Markdown 只保留裁决与导航；完整
 ledgers、JSON 和运行代码快照保留在本地 artifact 中。
+
+RI252 的已验证 runner 与 focused test 另由历史分支 `codex/e15-actionable-occurrence` 的 closeout
+commit `eb09e7002762eab496e6a134ca605ff75fce09c0` 保存。当前 R2 checkout 不保留这两个 closed-leaf
+执行入口；需要复核历史实现时从该 commit 只读查看，不得据此推导新的 fit authority。

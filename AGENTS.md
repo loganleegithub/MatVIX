@@ -13,16 +13,33 @@
 MatVIX 是 VIX 市场天气站。它的主任务依次是：
 
 1. 识别市场压力是否正在形成；
-2. 估计未来五个交易日首次跨越 E15 的可校准发生概率，并在证据不足时拒绝输出候选动作；
+2. 估计未来五个交易日首次跨越 E15 的可校准发生概率，并在数据或证据不足时诚实拒绝；
 3. 用校准、可审计的概率或分布表达不确定性；
 4. 只有在独立证据成立后，才允许下游系统讨论风险预算、仓位或交易。
 
-当前 `codex/e15-actionable-occurrence` 研究线只回答一个问题：在各自冻结的 EOD 与 pre-open
-时钟上，现有 E15 first passage 在未来五个 XNYS session 内发生的概率是多少。完整幅度
-Severity、E30/E60 分级、条件分位数和完整路径分布保留在 V4 历史分支，不是本分支的 active
-研究对象。HTTP 200、测试全绿、报告生成或事后 perfect-label 收益均不能替代可校准概率证据。
+当前 E15 对象由 `docs/README.md` 指向的唯一 active research brief 定义。它研究同一个五日
+first-passage 事件在真实信息时钟上的概率前沿：每个节点的概率语义、相邻节点之间的诚实更新，
+以及 clock value 与 method value 的分离。完整幅度 Severity、E30/E60 分级、条件分位数和完整路径
+分布保留在历史研究中，不是当前 E15 authority。HTTP 200、测试全绿、报告生成、事后
+perfect-label 收益或更晚时钟的天然信息优势均不能替代可校准概率证据。
 
-## 2. 证据优先级
+## 2. Agent 主线与证据优先级
+
+每次非平凡任务开始时，agent 只先读取 `AGENTS.md`、`docs/README.md` 指向的唯一
+active research 文档和当前 `git status`。动手前必须在当前会话或计划中明确五件事：
+
+1. `NORTH_STAR`：父级研究目标；
+2. `CURRENT_EVIDENCE`：已成立和尚未成立的证据；
+3. `CLOSED_LEAVES`：已关闭的候选、数据路径或动作主张；
+4. `CURRENT_QUESTION`：本轮只回答的一个问题；
+5. `MINIMAL_SURFACE`：需要新增、保留和删除的最小文件面。
+
+这五项是工作上下文，不是新的配置、状态文件或合同。最近一个实验是研究树的叶子，
+不得因为刚执行完就取代 `NORTH_STAR`。如果叶子失败，回到父问题选择下一条有新信息的
+路径，不在该叶子上继续叠加修复、治理或抽象。
+
+当前五项内容必须从唯一 active brief 的 `Current working context` 读取；交接、archive、output
+或旧分支只能帮助导航和核验，不能提供第二套当前状态。
 
 发生冲突时按以下顺序判断：
 
@@ -93,7 +110,8 @@ Severity、E30/E60 分级、条件分位数和完整路径分布保留在 V4 历
   剩余的精确技术障碍，而不是笼统要求人类“提供数据”。
 - 自主解决数据缺口不扩大外部权限：允许领取不产生付款、订阅或额外特权的公开零价数据；禁止
   虚构身份、绕过访问控制、违反禁止自动提取条款，或未经明确授权购买付费数据。原始数据默认
-  留在本地并排除出 Git，来源、哈希、许可/条款和不可再分发边界必须可审计。
+  留在本地并排除出 Git，来源、取得时间、覆盖与许可/不可再分发边界必须可审计。只有
+  数据身份会实质影响一次冻结评估或发布时，才记必要哈希；不建仓库级哈希绑定层。
 - 探索阶段默认比较一个 causal baseline 与少量互补 candidate。没有新假设时禁止无限追加模型；
   有明确新假设时也禁止旧 closeout 永久阻止新研究。
 - 在 candidate loss 尚不存在前，功效分析只能标记为 design sensitivity，不能用于宣判整个科学
@@ -107,12 +125,23 @@ Severity、E30/E60 分级、条件分位数和完整路径分布保留在 V4 历
   prospective cohort。
 - Active target 是 `P(E15 first passage within 5 sessions | clock-time PIT information)`；历史
   `E15` 继续表示 `log(VIX_future / VIX_current) >= 0.15`，literal 15% 只能作预写敏感性。
-- 天气概率在所有有效 origin 上评分；主动作评价限于 `data_status == OK` 且 contango 仍允许
-  short-vol 的 origin，并分开报告 `PRE_ONSET` 与 `ACTIVE_CASCADE`。
-- EOD prior 与 09:20 ET pre-open posterior 是两个不同产品时钟，必须分别击败各自 baseline；
-  更短 lead time 不得冒充模型进步。
-- 新候选必须带来真正新增的 causal/PIT 信息，并同时通过 proper score、校准和固定行动价值门。
-  数据迟到、gap 或 OOD 时输出 `ABSTAIN`，不得改变仓位。
+- 同一 sequential probability 问题内的各节点必须共享 event identity、anchor、target window、
+  deadline 和 outcome；增加信息时钟不得重置 target 或缩短 horizon。
+- 各 forecast clock 必须在自己的 causal baseline 上裁决；若比较跨时钟 forecast，必须另设同钟
+  comparator，分开 clock/new-information value 与 method value。更短 lead time 不得冒充模型进步。
+- 节点分别校准不自动构成诚实 probability process；任何 sequential-update 主张都必须另外检查
+  相邻更新边的一致性。prior、sensor mapping 和 observation/receipt-quality drift 应拆开报告，
+  纯 intercept、lag memory 或重校准不得吸收漂移后冒充新增信息。
+- 新天气概率候选必须带来真正新增的 causal/PIT 信息，并通过 proper score、
+  校准、相同时钟增量与时间/制度稳定性证据。历史 OOF 通过最多 nomination；看过的历史数据不能
+  建立 global best 或 prospective confirmation。
+- 数据迟到、gap 或 OOD 时输出 `ABSTAIN`；没有独立授权的研究概率不得改变仓位。
+- `CLOSED_LEAF` 只约束原信息集、时钟、候选构造、动作和损失函数。历史裁决既不授权新施工，也
+  不永久否决具有真正新增 causal/PIT 信息的新问题。
+- 概率、经济与执行是三层不同证据：概率层在所有有效 origin 上按 clock-specific baseline 裁决；
+  经济层必须另行冻结动作、可选集合、决策时钟、损失和基准；执行层还需要资产、方向、规模、
+  entry/exit、bid/ask/size、receipt、费用、滑点、容量和明确人类授权。动作失败只关闭动作叶子，
+  proper-score 或规范化 cost-loss 改善也不产生交易权限。
 - 在相对动态 climatology、V3 level/occurrence 与当前期限结构建立独立增量前，不接入 SmatVIX、
   Compensation、仓位、订单或交易结果。
 

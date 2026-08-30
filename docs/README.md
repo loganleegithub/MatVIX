@@ -2,49 +2,27 @@
 
 Status: `ACTIVE`
 
-This is the only index of active repository documents. Historical files on another branch or in
-local output directories are evidence, not current authority.
+本文件只负责导航和 authority 选择，不复制研究状态、实验结果或交接内容。文件名中的
+`FROZEN/AUTHORITY/CLOSEOUT`、本地 outputs 和历史分支都不能覆盖这里列出的当前 authority。
 
-## Active repository documents
+## Current authority
 
-| Scope | Document | Role |
+| 对象 | 文档 | 唯一职责 |
 |---|---|---|
-| Repository constitution | [`../AGENTS.md`](../AGENTS.md) | Research, engineering and document governance |
-| Product entry point | [`../README.md`](../README.md) | Current V3 product and runtime guide |
-| Project stage handoff | [`project-handoff.md`](project-handoff.md) | V1–V3 history, bounded V4 findings and the current E15 handoff |
-| V3 release identity | [`../MATVIX_V3_RELEASE_MANIFEST.json`](../MATVIX_V3_RELEASE_MANIFEST.json) | Frozen V3 release artifact inventory |
-| Prospective protocol | [`../MATVIX_PROSPECTIVE_001_CONTRACT.md`](../MATVIX_PROSPECTIVE_001_CONTRACT.md) | Append-only prediction/outcome protocol |
-| Actionable E15 research | [`research/e15-actionable-occurrence-research.md`](research/e15-actionable-occurrence-research.md) | Design-only five-session E15 occurrence architecture |
+| 仓库规则 | [`../AGENTS.md`](../AGENTS.md) | 研究、代码、证据、文档与权限边界 |
+| V3 产品 | [`../README.md`](../README.md) | 稳定产品入口、运行方式与冻结产品面 |
+| E15 research | [`research/e15-probability-frontier.md`](research/e15-probability-frontier.md) | 唯一 active E15 科学计划与当前裁决边界 |
 
-## Current research boundary
+## Navigation only
 
-V3 remains the frozen product surface. The only active post-V3 research object on this branch is a
-calibrated, abstaining probability of the existing five-session E15 first passage. Weather scoring
-uses every valid origin; the primary action test is restricted to valid contango origins where the
-existing term-structure gate still permits short-vol exposure. EOD and 09:20 ET forecasts are
-separate clocks and must beat separate causal baselines.
+| 文档 | 作用域 |
+|---|---|
+| [`project-handoff.md`](project-handoff.md) | 新 agent 的当前入口；不拥有科学裁决权 |
+| [`archive/README.md`](archive/README.md) | 已被替代的研究、合同和报告导航 |
 
-The E15 brief is `DESIGN_ONLY / NOT_FROZEN / NOT_EXECUTED`. It authorizes no fit, V3 change,
-consumer, position, order or trade.
+## Scoped product and runtime identity
 
-## Historical V4/Severity evidence
-
-The complete historical runner/test/contract/report closure is isolated on
-`codex/v4-severity-reset-audit` at commit
-`59c5df623c1aa9e7d43316bc5aa3f148658fca72`. This E15 branch deliberately contains none of those
-callable paths. Their bounded scientific conclusions are summarized in
-[`project-handoff.md`](project-handoff.md); use the V4 branch when exact historical mechanics or
-reports must be inspected.
-
-Legacy raw and derived Severity datasets are not part of the E15 checkout. They are not E15 inputs
-and do not create active research authority.
-
-## Governance rules
-
-- One scientific or product object has at most one active document.
-- New background is linked, not copied into another contract.
-- Generated ledgers and large machine evidence belong in ignored `data/`, `outputs/` or
-  `artifacts/` paths, not expanded Markdown.
-- Historical executable paths live on their owning branch; a summary in this branch must not make
-  them callable again.
-- Add, rename or retire an active document only together with an update to this index.
+| 对象 | 文档 | 作用域 |
+|---|---|---|
+| V3 release identity | [`../MATVIX_V3_RELEASE_MANIFEST.json`](../MATVIX_V3_RELEASE_MANIFEST.json) | 冻结 V3 产品身份 |
+| Prospective 001 | [`../MATVIX_PROSPECTIVE_001_CONTRACT.md`](../MATVIX_PROSPECTIVE_001_CONTRACT.md) | V3 append-only prediction/outcome 协议；不是 E15 R2 receipt 或 prospective authority |
